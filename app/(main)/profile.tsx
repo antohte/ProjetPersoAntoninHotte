@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator } from "react-native";
 import { useRouter } from "expo-router";
-import { doc, getDoc, collection, query, where, orderBy, limit, getDocs } from "firebase/firestore";
+import { doc, getDoc, collection, query, where, orderBy, limit, getDocs, Timestamp } from "firebase/firestore";
 import { auth, db } from "../../lib/firebase";
 import { colors } from "../../constants/color";
 
-type Activity = { id: string; title?: string; type?: string; when?: any };
+type Activity = { id: string; title?: string; date?: Timestamp; location?: string };
 
 export default function ProfileScreen() {
   const router = useRouter();
@@ -23,15 +23,20 @@ export default function ProfileScreen() {
         const usnap = await getDoc(uref);
         if (usnap.exists()) setUserData(usnap.data());
 
-        
+        //historique 3 derniere activite
         const actsQ = query(
           collection(db, "activities"),
-          where("ownerId", "==", user.uid),
+          where("creatorId", "==", user.uid),
           orderBy("createdAt", "desc"),
           limit(3)
         );
         const aSnap = await getDocs(actsQ);
-        setRecentActs(aSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
+        setRecentActs(
+          aSnap.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as any),
+          }))
+        );
       } finally {
         setLoading(false);
       }
@@ -39,6 +44,16 @@ export default function ProfileScreen() {
     run();
   }, []);
 
+  const formatEventDate = (ts?: Timestamp) => {
+    if (!ts) return "";
+    return ts.toDate().toLocaleString("fr-FR", {
+      weekday: "short",
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
   if (loading) {
     return (
       <View style={s.center}>
@@ -78,7 +93,7 @@ export default function ProfileScreen() {
         </View>
       )}
 
-      {/* activités récentes */}
+      {/*activites recentes */}
       <View style={s.section}>
         <Text style={s.sectionTitle}>Activités récentes</Text>
         {recentActs.length === 0 ? (
@@ -86,9 +101,9 @@ export default function ProfileScreen() {
         ) : (
           recentActs.map((a) => (
             <View key={a.id} style={s.card}>
-              <Text style={s.cardTitle}>{a.title || a.type || "Activité"}</Text>
+              <Text style={s.cardTitle}>{a.title || "Activité"}</Text>
               <Text style={s.cardMeta}>
-                {a.when?.toDate ? a.when.toDate().toLocaleString() : ""}
+                {formatEventDate(a.date)} {a.location ? `• ${a.location}` : ""}
               </Text>
             </View>
           ))
