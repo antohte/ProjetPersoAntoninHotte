@@ -1,378 +1,583 @@
-import { useEffect, useState, useMemo } from "react";
+// app/(main)/feed.tsx
+import React, { useEffect, useState, useMemo } from "react";
 import {
   View,
   Text,
   StyleSheet,
-  ActivityIndicator,
-  FlatList,
+  ScrollView,
+  RefreshControl,
   TouchableOpacity,
+  TextInput,
 } from "react-native";
-import { useRouter } from "expo-router";
 import {
   collection,
-  onSnapshot,
   query,
   orderBy,
+  onSnapshot,
   Timestamp,
-  updateDoc,
   doc,
+  updateDoc,
   arrayUnion,
   arrayRemove,
+  addDoc,
 } from "firebase/firestore";
-import { auth, db } from "../../lib/firebase";
+import { db, auth } from "../../lib/firebase";
 import { colors } from "../../constants/color";
+import { format } from "date-fns";
+import { fr } from "date-fns/locale";
 
-type ActivityItem = {
+type Activity = {
   id: string;
   title: string;
-  description?: string;
-  creatorId: string;
+  description: string;
+  place: string;
+  date: Timestamp;
+  ownerId: string;
   creatorName?: string;
-  createdAt?: Timestamp;
-  date?: Timestamp;
-  location?: string;
-  participants?: string[];
-  status?: string;
+  participants: string[];
 };
 
+type Comment = {
+  id: string;
+  text: string;
+  userId: string;
+  userName?: string;
+  createdAt?: Timestamp;
+};
+
+//post general
+
+type ActivityCardProps = {
+  activity: Activity;
+  isParticipant: boolean;
+  onToggleParticipation: () => void;
+  comments: Comment[];
+  draftComment: string;
+  onChangeDraft: (text: string) => void;
+  onSendComment: () => void;
+};
+
+const ActivityCard: React.FC<ActivityCardProps> = ({
+  activity,
+  isParticipant,
+  onToggleParticipation,
+  comments,
+  draftComment,
+  onChangeDraft,
+  onSendComment,
+}) => {
+  const jsDate = activity.date.toDate();
+  const isPast = jsDate.getTime() < Date.now();
+
+  const dateLabel = format(jsDate, "EEE dd MMM. 'à' HH:mm", { locale: fr });
+
+  const displayName = activity.creatorName || "Utilisateur";
+  const initial = displayName.trim()[0]?.toUpperCase() ?? "U";
+
+  const previewComments = comments.slice(0, 3);
+  const moreCount = comments.length - previewComments.length;
+
+  return (
+    <View style={s.card}>
+      {/*style story/post insta */}
+      <View style={s.cardHeader}>
+        <View style={s.avatarCircle}>
+          <Text style={s.avatarText}>{initial}</Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={s.creatorName}>{displayName}</Text>
+        </View>
+      </View>
+
+      {/* post */}
+      <View style={s.cardBody}>
+        <Text style={s.title}>{activity.title}</Text>
+        {activity.description ? (
+          <Text style={s.description}>{activity.description}</Text>
+        ) : null}
+
+        <View style={s.chipsRow}>
+          <View style={s.chip}>
+            <Text style={s.chipText}>{dateLabel}</Text>
+          </View>
+          {activity.place ? (
+            <View style={s.chip}>
+              <Text style={s.chipText}>{activity.place}</Text>
+            </View>
+          ) : null}
+        </View>
+
+        <Text style={s.participantsText}>
+          {activity.participants.length} participant(s)
+        </Text>
+      </View>
+
+      {/*like/comment */}
+      <View style={s.actionsRow}>
+        <TouchableOpacity
+          style={[
+            s.participateBtn,
+            isPast && s.participateBtnPast,
+            isParticipant && !isPast && s.participateBtnActive,
+          ]}
+          disabled={isPast}
+          onPress={onToggleParticipation}
+        >
+          <Text
+            style={[
+              s.participateText,
+              isPast && s.participateTextPast,
+            ]}
+          >
+            {isPast
+              ? "Terminée"
+              : isParticipant
+              ? "Tu participes"
+              : "Participer"}
+          </Text>
+        </TouchableOpacity>
+
+        <View style={s.commentLabelWrapper}>
+          <Text style={s.commentLabel}>Commenter</Text>
+        </View>
+      </View>
+
+      {/*commentaires */}
+      <View style={s.commentsBlock}>
+        {previewComments.map((c) => (
+          <Text key={c.id} style={s.commentLine}>
+            <Text style={s.commentAuthor}>{c.userName || "Anon"} </Text>
+            {c.text}
+          </Text>
+        ))}
+
+        {moreCount > 0 && (
+          <Text style={s.moreComments}>
+            Voir {moreCount} autre(s) commentaire(s)…
+          </Text>
+        )}
+
+        <View style={s.commentInputRow}>
+          <TextInput
+            style={s.commentInput}
+            placeholder="Ajouter un commentaire..."
+            placeholderTextColor={colors.muted}
+            value={draftComment}
+            onChangeText={onChangeDraft}
+          />
+          <TouchableOpacity style={s.sendBtn} onPress={onSendComment}>
+            <Text style={s.sendBtnText}>{">"}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  );
+};
+
+//ecran feed
+
 export default function FeedScreen() {
-  const router = useRouter();
-  const [activities, setActivities] = useState<ActivityItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
+  const [activities, setActivities] = useState<Activity[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+  const [commentsByActivity, setCommentsByActivity] = useState<
+    Record<string, Comment[]>
+  >({});
+  const [draftComments, setDraftComments] = useState<Record<string, string>>(
+    {}
+  );
 
-  const currentUid = auth.currentUser?.uid ?? null;
+  const user = auth.currentUser;
 
+  //recup des activités triee
   useEffect(() => {
-    setLoading(true);
-    const q = query(
-      collection(db, "activities"),
-      orderBy("date", "asc")
-    );
+  const q = query(
+    collection(db, "activities"),
+    orderBy("date", "asc")   // ⬅ seulement ça
+  );
 
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const list: ActivityItem[] = snap.docs.map((d) => ({
+  const unsub = onSnapshot(
+    q,
+    (snap) => {
+      const list: Activity[] = snap.docs.map((d) => {
+        const data = d.data() as any;
+        return {
           id: d.id,
-          ...(d.data() as any),
-        }));
-        setActivities(list);
-        setLoading(false);
-      },
-      (error) => {
-        console.error(error);
-        setErr("Impossible de charger les activités.");
-        setLoading(false);
-      }
-    );
+          title: data.title,
+          description: data.description ?? "",
+          place: data.place ?? "",
+          date: data.date,
+          ownerId: data.ownerId,
+          creatorName:
+            data.creatorName ??
+            data.ownerDisplayName ??
+            data.ownerEmail ??
+            "Utilisateur",
+          participants: data.participants ?? [],
+        };
+      });
+      setActivities(list);
+    },
+    (err) => {
+      console.log("Erreur chargement activités :", err);
+    }
+  );
 
-    return unsub;
-  }, []);
+  return () => unsub();
+}, []);
 
-  const formatEventDate = (ts?: Timestamp) => {
-    if (!ts) return "";
-    const d = ts.toDate();
-    return d.toLocaleString("fr-FR", {
-      weekday: "short",
-      day: "2-digit",
-      month: "short",
-      hour: "2-digit",
-      minute: "2-digit",
+
+  //abonnements commentaires
+  useEffect(() => {
+    const ids = activities.map((a) => a.id);
+    if (ids.length === 0) return;
+
+    const unsubscribers = ids.map((id) => {
+      const q = query(
+        collection(db, "activities", id, "comments"),
+        orderBy("createdAt", "asc")
+      );
+
+      return onSnapshot(
+        q,
+        (snap) => {
+          const list: Comment[] = snap.docs.map((d) => {
+            const data = d.data() as any;
+            return {
+              id: d.id,
+              text: data.text,
+              userId: data.userId,
+              userName: data.userName,
+              createdAt: data.createdAt,
+            };
+          });
+          setCommentsByActivity((prev) => ({ ...prev, [id]: list }));
+        },
+        (err) => {
+          console.log("Erreur commentaires :", err);
+        }
+      );
     });
+
+    return () => {
+      unsubscribers.forEach((u) => u && u());
+    };
+  }, [JSON.stringify(activities.map((a) => a.id))]);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    setTimeout(() => setRefreshing(false), 400);
   };
 
-  const toggleParticipation = async (activity: ActivityItem) => {
-    if (!currentUid) return;
-
+  //participation
+  const toggleParticipation = async (activity: Activity) => {
+    if (!user) return;
     const ref = doc(db, "activities", activity.id);
-    const alreadyIn = activity.participants?.includes(currentUid);
+    const isParticipant = activity.participants.includes(user.uid);
 
     try {
       await updateDoc(ref, {
-        participants: alreadyIn
-          ? arrayRemove(currentUid)
-          : arrayUnion(currentUid),
+        participants: isParticipant
+          ? arrayRemove(user.uid)
+          : arrayUnion(user.uid),
       });
     } catch (e) {
-      console.error(e);
+      console.log("Erreur participation :", e);
     }
   };
 
-  if (loading) {
-    return (
-      <View style={s.center}>
-        <ActivityIndicator color={colors.primary} />
-        <Text style={s.muted}>Chargement des activités...</Text>
-      </View>
-    );
-  }
+  //envoi d’un commentaire
+  const handleSendComment = async (activityId: string) => {
+    const txt = draftComments[activityId]?.trim();
+    if (!txt || !user) return;
 
-  if (err) {
-    return (
-      <View style={s.center}>
-        <Text style={s.error}>{err}</Text>
-      </View>
-    );
-  }
+    try {
+      await addDoc(collection(db, "activities", activityId, "comments"), {
+        text: txt,
+        userId: user.uid,
+        userName: user.displayName || user.email || "Profil",
+        createdAt: Timestamp.now(),
+      });
 
-  const hasActivities = activities.length > 0;
+      setDraftComments((prev) => ({ ...prev, [activityId]: "" }));
+    } catch (e) {
+      console.log("Erreur ajout commentaire :", e);
+    }
+  };
+
+  //separation a venir / terminées
+  const { upcomingActivities, pastActivities } = useMemo(() => {
+    const now = Date.now();
+
+    const upcoming = activities.filter(
+      (a) => a.date.toDate().getTime() >= now
+    );
+    const past = activities.filter((a) => a.date.toDate().getTime() < now);
+
+    past.sort(
+      (a, b) => b.date.toDate().getTime() - a.date.toDate().getTime()
+    );
+
+    return { upcomingActivities: upcoming, pastActivities: past };
+  }, [activities]);
 
   return (
-    <View style={s.container}>
-      {!hasActivities ? (
-        <View style={s.emptyContainer}>
-          <Text style={s.title}>Aucune activité pour le moment</Text>
-          <Text style={s.muted}>
-            Sois le premier à proposer une sortie ou un événement !
-          </Text>
+    <ScrollView
+      style={s.screen}
+      contentContainerStyle={s.content}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          tintColor={colors.primary}
+        />
+      }
+    >
+      <Text style={s.pageTitle}>Activités</Text>
 
-          <TouchableOpacity
-            style={s.btnPrimary}
-            onPress={() => router.push("/(main)/create-activity")}
-          >
-            <Text style={s.btnPrimaryText}>Créer une activité</Text>
-          </TouchableOpacity>
-        </View>
+      {/*a venir */}
+      <Text style={s.sectionTitle}>Activités à venir</Text>
+      {upcomingActivities.length === 0 ? (
+        <Text style={s.emptyText}>
+          Aucune activité à venir pour le moment.
+        </Text>
       ) : (
-        <>
-          <View style={s.headerRow}>
-            <Text style={s.title}>Activités à venir</Text>
-            <TouchableOpacity
-              onPress={() => router.push("/(main)/create-activity")}
-            >
-              <Text style={s.link}>+ Nouvelle activité</Text>
-            </TouchableOpacity>
-          </View>
+        upcomingActivities.map((act) => {
+          const isParticipant =
+            !!user && act.participants.includes(user.uid);
+          const comments = commentsByActivity[act.id] ?? [];
+          const draft = draftComments[act.id] ?? "";
 
-          <FlatList
-            data={activities}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={{ paddingBottom: 24 }}
-            renderItem={({ item }) => {
-              const isParticipant = !!currentUid && item.participants?.includes(currentUid);
-              const initials =
-                (item.creatorName?.[0] ??
-                  item.creatorName?.charAt(0) ??
-                  "?").toUpperCase();
-
-              return (
-                <View style={s.card}>
-                  {/*header "créé par"*/}
-                  <View style={s.cardHeader}>
-                    <View style={s.avatar}>
-                      <Text style={s.avatarText}>{initials}</Text>
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={s.creatorName}>
-                        {item.creatorName ?? "Un étudiant"}
-                      </Text>
-                      <Text style={s.cardMeta}>
-                        Créé par {item.creatorName ?? "un étudiant"}
-                      </Text>
-                    </View>
-                  </View>
-
-                  {/* contenu titre + desc*/}
-                  <Text style={s.cardTitle}>{item.title}</Text>
-
-                  {item.description ? (
-                    <Text style={s.cardDesc} numberOfLines={3}>
-                      {item.description}
-                    </Text>
-                  ) : null}
-
-                  {/*date + lieu*/}
-                  <View style={s.infoRow}>
-                    {item.date && (
-                      <View style={s.pill}>
-                        <Text style={s.pillText}>{formatEventDate(item.date)}</Text>
-                      </View>
-                    )}
-                    {item.location && (
-                      <View style={s.pill}>
-                        <Text style={s.pillText}>{item.location}</Text>
-                      </View>
-                    )}
-                  </View>
-
-                  {/*footer */}
-                  <View style={s.cardFooter}>
-                    <Text style={s.cardParticipants}>
-                      {item.participants?.length ?? 0} participant(s)
-                    </Text>
-
-                    <TouchableOpacity
-                      style={[
-                        s.btnSmall,
-                        isParticipant && s.btnSmallActive,
-                      ]}
-                      onPress={() => toggleParticipation(item)}
-                    >
-                      <Text
-                        style={[
-                          s.btnSmallText,
-                          isParticipant && s.btnSmallTextActive,
-                        ]}
-                      >
-                        {isParticipant ? "Tu participes" : "Participer"}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              );
-            }}
-          />
-        </>
+          return (
+            <ActivityCard
+              key={act.id}
+              activity={act}
+              isParticipant={isParticipant}
+              onToggleParticipation={() => toggleParticipation(act)}
+              comments={comments}
+              draftComment={draft}
+              onChangeDraft={(text) =>
+                setDraftComments((prev) => ({
+                  ...prev,
+                  [act.id]: text,
+                }))
+              }
+              onSendComment={() => handleSendComment(act.id)}
+            />
+          );
+        })
       )}
-    </View>
+
+      {/*terminee */}
+      <Text style={s.sectionTitle}>Activités terminées</Text>
+      {pastActivities.length === 0 ? (
+        <Text style={s.emptyText}>Pas encore d’activité passée.</Text>
+      ) : (
+        pastActivities.map((act) => {
+          const isParticipant =
+            !!user && act.participants.includes(user.uid);
+          const comments = commentsByActivity[act.id] ?? [];
+          const draft = draftComments[act.id] ?? "";
+
+          return (
+            <ActivityCard
+              key={act.id}
+              activity={act}
+              isParticipant={isParticipant}
+              onToggleParticipation={() => toggleParticipation(act)}
+              comments={comments}
+              draftComment={draft}
+              onChangeDraft={(text) =>
+                setDraftComments((prev) => ({
+                  ...prev,
+                  [act.id]: text,
+                }))
+              }
+              onSendComment={() => handleSendComment(act.id)}
+            />
+          );
+        })
+      )}
+    </ScrollView>
   );
 }
 
+
 const s = StyleSheet.create({
-  container: {
+  screen: {
     flex: 1,
     backgroundColor: colors.bg,
-    padding: 16,
   },
-  center: {
-    flex: 1,
-    backgroundColor: colors.bg,
-    justifyContent: "center",
-    alignItems: "center",
+  content: {
     padding: 16,
+    paddingBottom: 40,
   },
-  title: {
+  pageTitle: {
     color: colors.text,
     fontSize: 22,
     fontWeight: "800",
-    marginBottom: 6,
+    marginBottom: 12,
   },
-  muted: {
-    color: colors.muted,
-    fontSize: 14,
-    textAlign: "center",
-  },
-  error: {
-    color: "#fca5a5",
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    gap: 12,
-  },
-  btnPrimary: {
-    marginTop: 12,
-    backgroundColor: colors.primary,
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 999,
-  },
-  btnPrimaryText: {
-    color: "#0b111f",
+  sectionTitle: {
+    color: colors.text,
+    fontSize: 18,
     fontWeight: "700",
-    fontSize: 16,
+    marginTop: 12,
+    marginBottom: 8,
   },
-  headerRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
+  emptyText: {
+    color: colors.muted,
     marginBottom: 12,
   },
-  link: {
-    color: colors.primary,
-    fontWeight: "600",
-  },
+
+  // card
   card: {
-    backgroundColor: "#111827",
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
+    backgroundColor: "#020617",
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 16,
   },
   cardHeader: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 8,
-    gap: 10,
+    marginBottom: 10,
   },
-  avatar: {
+  avatarCircle: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: "#1f2937",
+    backgroundColor: "#111827",
     alignItems: "center",
     justifyContent: "center",
+    marginRight: 10,
   },
   avatarText: {
     color: colors.text,
-    fontWeight: "800",
+    fontWeight: "700",
   },
   creatorName: {
     color: colors.text,
     fontWeight: "700",
     fontSize: 14,
   },
-  cardMeta: {
-    color: colors.muted,
-    fontSize: 12,
+  cardBody: {
+    marginBottom: 12,
   },
-  cardTitle: {
+  title: {
     color: colors.text,
     fontSize: 18,
-    fontWeight: "800",
+    fontWeight: "700",
     marginBottom: 4,
   },
-  cardDesc: {
-    color: colors.text,
+  description: {
+    color: colors.muted,
     fontSize: 14,
     marginBottom: 8,
   },
-  infoRow: {
+  chipsRow: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 6,
-    marginBottom: 8,
+    marginBottom: 4,
   },
-  pill: {
+  chip: {
+    backgroundColor: "#020617",
+    borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 4,
-    borderRadius: 999,
-    backgroundColor: "#1f2937",
+    borderWidth: 1,
+    borderColor: "#111827",
   },
-  pillText: {
+  chipText: {
     color: colors.text,
     fontSize: 12,
   },
-  cardFooter: {
-    marginTop: 4,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  cardParticipants: {
+  participantsText: {
     color: colors.muted,
     fontSize: 12,
+    marginTop: 4,
   },
-  btnSmall: {
+
+  actionsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 8,
+  },
+  participateBtn: {
+    flex: 1,
     backgroundColor: colors.primary,
-    paddingVertical: 6,
-    paddingHorizontal: 16,
     borderRadius: 999,
+    alignItems: "center",
+    paddingVertical: 10,
   },
-  btnSmallActive: {
-    backgroundColor: "#111827",
-    borderWidth: 1,
-    borderColor: colors.border,
+  participateBtnActive: {
+    backgroundColor: "#16a34a",
   },
-  btnSmallText: {
+  participateBtnPast: {
+    backgroundColor: "#4b5563",
+  },
+  participateText: {
     color: "#0b111f",
     fontWeight: "700",
+  },
+  participateTextPast: {
+    color: "#fecaca",
+  },
+  commentLabelWrapper: {
+    paddingHorizontal: 8,
+  },
+  commentLabel: {
+    color: colors.muted,
     fontSize: 14,
   },
-  btnSmallTextActive: {
+
+  commentsBlock: {
+    borderTopWidth: 1,
+    borderTopColor: "#111827",
+    paddingTop: 8,
+    marginTop: 4,
+  },
+  commentLine: {
     color: colors.text,
+    fontSize: 13,
+    marginBottom: 2,
+  },
+  commentAuthor: {
+    fontWeight: "700",
+  },
+  moreComments: {
+    color: colors.muted,
+    fontSize: 12,
+    marginTop: 2,
+    marginBottom: 6,
+  },
+  commentInputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 4,
+    gap: 8,
+  },
+  commentInput: {
+    flex: 1,
+    backgroundColor: "#020617",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: "#111827",
+    color: colors.text,
+    fontSize: 13,
+  },
+  sendBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sendBtnText: {
+    color: "#0b111f",
+    fontWeight: "800",
   },
 });

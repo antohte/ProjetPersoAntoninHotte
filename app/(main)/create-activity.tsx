@@ -5,187 +5,231 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  ActivityIndicator,
-  Alert,
   ScrollView,
+  Alert,
 } from "react-native";
 import { useRouter } from "expo-router";
+import DateTimePicker, {
+  DateTimePickerEvent,
+} from "@react-native-community/datetimepicker";
 import {
+  Timestamp,
   addDoc,
   collection,
-  serverTimestamp,
-  Timestamp,
-  doc,
-  getDoc,
 } from "firebase/firestore";
 import { auth, db } from "../../lib/firebase";
 import { colors } from "../../constants/color";
 
 export default function CreateActivityScreen() {
   const router = useRouter();
+
   const [title, setTitle] = useState("");
-  const [desc, setDesc] = useState("");
-  const [dateStr, setDateStr] = useState("");
-  const [location, setLocation] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [description, setDescription] = useState("");
+  const [place, setPlace] = useState("");
+  const [when, setWhen] = useState<Date>(new Date());
+  const [showPicker, setShowPicker] = useState(false);
+
+  const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const onCreate = async () => {
+  const formatDateFR = (d: Date) =>
+    new Intl.DateTimeFormat("fr-FR", {
+      weekday: "short",
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(d);
+
+  const onChangeDate = (event: DateTimePickerEvent, date?: Date) => {
+    if (event.type === "dismissed") {
+      setShowPicker(false);
+      return;
+    }
+    if (date) {
+      setWhen(date);
+    }
+    setShowPicker(false);
+  };
+
+  const onSave = async () => {
     setErr(null);
+
+    if (!title.trim()) {
+      setErr("Merci d’indiquer un titre d’activité.");
+      return;
+    }
+    if (!place.trim()) {
+      setErr("Merci d’indiquer un lieu.");
+      return;
+    }
 
     const user = auth.currentUser;
     if (!user) {
-      setErr("Tu dois être connecté pour créer une activité.");
+      router.replace("/login");
       return;
     }
 
-    if (!title.trim() || !dateStr.trim() || !location.trim()) {
-      setErr("Merci de remplir au moins titre, date et lieu.");
-      return;
-    }
-
-    //gestion date
-    const normalized = dateStr.trim().replace("T", " ");
-    const parts = normalized.split(" ");
-    const dPart = parts[0];          // 2025-11-21
-    const tPart = parts[1] ?? "20:00"; //heure par defaut
-
-    const [year, month, day] = dPart.split("-").map(Number);
-    const [hour, minute] = tPart.split(":").map(Number);
-    const date = new Date(year, (month ?? 1) - 1, day ?? 1, hour ?? 20, minute ?? 0);
-
-    if (isNaN(date.getTime())) {
-      setErr("Format de date invalide. Ex : 2025-11-21 ou 2025-11-21 20:30");
-      return;
-    }
-
-    setLoading(true);
+    setSaving(true);
     try {
-      //cherche pseudo ds /users/{uid}
-      let creatorName = user.email ?? "Etudiant";
-      try {
-        const uref = doc(db, "users", user.uid);
-        const usnap = await getDoc(uref);
-        if (usnap.exists()) {
-          const udata = usnap.data() as any;
-          if (udata.displayName && String(udata.displayName).trim().length > 0) {
-            creatorName = udata.displayName;
-          }
-        }
-      } catch {
-      
-      }
+      const creatorName =
+        user.displayName || user.email || "Etudiant anonyme";
 
       await addDoc(collection(db, "activities"), {
         title: title.trim(),
-        description: desc.trim(),
-        creatorId: user.uid,
+        description: description.trim(),
+        place: place.trim(),
+        date: Timestamp.fromDate(when),
+        ownerId: user.uid,
         creatorName,
-        createdAt: serverTimestamp(),
-        date: Timestamp.fromDate(date),
-        location: location.trim(),
-        participants: [],
-        status: "upcoming",
+        participants: [] as string[],
+        createdAt: Timestamp.now(),
       });
 
-      Alert.alert("Activité créée", "Ton activité a bien été publiée !");
-      router.replace("/(main)/feed");
+      Alert.alert("Activité créée !", "Ta sortie a bien été enregistrée.");
+      //reset formulaire
+      setTitle("");
+      setDescription("");
+      setPlace("");
+      setWhen(new Date());
+
+      //back au feed
+      router.back();
     } catch (e: any) {
-      console.error(e);
-      setErr(e.message ?? "Création impossible.");
+      console.error("Erreur création activité:", e);
+      setErr(e.message ?? "Impossible de créer l’activité.");
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
   return (
-    <ScrollView style={s.container} contentContainerStyle={{ paddingBottom: 32 }}>
-      <Text style={s.title}>Créer une activité</Text>
+    <ScrollView
+      style={s.screen}
+      contentContainerStyle={s.content}
+      keyboardShouldPersistTaps="handled"
+    >
+      <Text style={s.title}>Nouvelle activité</Text>
+      <Text style={s.subtitle}>
+        Propose une sortie à tes camarades (soirée, révisions, sport…)
+      </Text>
 
+      <Text style={s.label}>Titre</Text>
       <TextInput
         style={s.input}
-        placeholder="Titre de l’activité"
+        placeholder="Ex : Sortie en boîte, Révisions de maths…"
         placeholderTextColor={colors.muted}
         value={title}
         onChangeText={setTitle}
       />
 
+      <Text style={s.label}>Description</Text>
       <TextInput
-        style={[s.input, { height: 90 }]}
-        placeholder="Description (optionnel)"
+        style={[s.input, s.inputMultiline]}
+        placeholder="Explique rapidement ce que tu proposes."
         placeholderTextColor={colors.muted}
-        value={desc}
-        onChangeText={setDesc}
+        value={description}
+        onChangeText={setDescription}
         multiline
       />
 
+      <Text style={s.label}>Lieu</Text>
       <TextInput
         style={s.input}
-        placeholder="Date (AAAA-MM-JJ ou AAAA-MM-JJ HH:MM)"
+        placeholder="Ex : La Box, Université, Bar du centre…"
         placeholderTextColor={colors.muted}
-        value={dateStr}
-        onChangeText={setDateStr}
+        value={place}
+        onChangeText={setPlace}
       />
 
-      <TextInput
+      <Text style={s.label}>Date et heure</Text>
+      <TouchableOpacity
         style={s.input}
-        placeholder="Lieu (ex : Box, Bar X, Campus Y...)"
-        placeholderTextColor={colors.muted}
-        value={location}
-        onChangeText={setLocation}
-      />
+        activeOpacity={0.8}
+        onPress={() => setShowPicker(true)}
+      >
+        <Text style={{ color: colors.text }}>{formatDateFR(when)}</Text>
+      </TouchableOpacity>
+
+      {showPicker && (
+        <DateTimePicker
+          mode="datetime"
+          value={when}
+          minimumDate={new Date()}
+          onChange={onChangeDate}
+        />
+      )}
 
       {err ? <Text style={s.error}>{err}</Text> : null}
 
       <TouchableOpacity
-        style={[s.btn, loading && { opacity: 0.7 }]}
-        onPress={onCreate}
-        disabled={loading}
+        style={[s.btn, saving && s.btnDisabled]}
+        onPress={onSave}
+        disabled={saving}
+        activeOpacity={0.9}
       >
-        {loading ? (
-          <ActivityIndicator color="#0b111f" />
-        ) : (
-          <Text style={s.btnText}>Publier l’activité</Text>
-        )}
+        <Text style={s.btnText}>
+          {saving ? "Enregistrement..." : "Créer l’activité"}
+        </Text>
       </TouchableOpacity>
     </ScrollView>
   );
 }
 
 const s = StyleSheet.create({
-  container: {
+  screen: {
     flex: 1,
     backgroundColor: colors.bg,
+  },
+  content: {
     padding: 20,
+    gap: 12,
   },
   title: {
     color: colors.text,
     fontSize: 24,
     fontWeight: "800",
-    marginBottom: 16,
+  },
+  subtitle: {
+    color: colors.muted,
+    marginBottom: 8,
+  },
+  label: {
+    color: colors.text,
+    fontSize: 14,
+    marginTop: 8,
+    marginBottom: 4,
   },
   input: {
-    backgroundColor: "#111827",
-    color: colors.text,
-    padding: 14,
-    borderRadius: 10,
+    backgroundColor: "#020617",
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     borderWidth: 1,
-    borderColor: colors.border,
-    marginBottom: 12,
+    borderColor: "#111827",
+    color: colors.text,
+  },
+  inputMultiline: {
+    minHeight: 80,
+    textAlignVertical: "top",
+  },
+  error: {
+    marginTop: 6,
+    color: "#fca5a5",
   },
   btn: {
+    marginTop: 16,
     backgroundColor: colors.primary,
-    padding: 14,
-    borderRadius: 10,
+    borderRadius: 999,
+    paddingVertical: 14,
     alignItems: "center",
-    marginTop: 8,
+  },
+  btnDisabled: {
+    opacity: 0.7,
   },
   btnText: {
     color: "#0b111f",
     fontWeight: "800",
-  },
-  error: {
-    color: "#fca5a5",
-    marginBottom: 8,
+    fontSize: 16,
   },
 });
