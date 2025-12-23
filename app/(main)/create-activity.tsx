@@ -16,6 +16,8 @@ import {
   Timestamp,
   addDoc,
   collection,
+  doc,
+  getDoc,
 } from "firebase/firestore";
 import { auth, db } from "../../lib/firebase";
 import { colors } from "../../constants/color";
@@ -72,8 +74,24 @@ export default function CreateActivityScreen() {
 
     setSaving(true);
     try {
-      const creatorName =
-        user.displayName || user.email || "Etudiant anonyme";
+      // recuperer displayname depuis firestore si disponible
+      let creatorName = user.displayName || "";
+      
+      if (!creatorName) {
+        try {
+          const userDoc = await getDoc(doc(db, "users", user.uid));
+          if (userDoc.exists()) {
+            creatorName = userDoc.data().displayName || "";
+          }
+        } catch (e) {
+          console.log("Erreur récupération displayName:", e);
+        }
+      }
+      
+      // fallback sur email uniquement en dernier recours
+      if (!creatorName) {
+        creatorName = user.email?.split("@")[0] || "Utilisateur";
+      }
 
       await addDoc(collection(db, "activities"), {
         title: title.trim(),

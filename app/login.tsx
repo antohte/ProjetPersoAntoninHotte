@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { View, Text, TextInput, TouchableOpacity, StyleSheet } from "react-native";
-import { signInWithEmailAndPassword } from "firebase/auth";
-import { auth } from "../lib/firebase";
+import { signInWithEmailAndPassword, updateProfile } from "firebase/auth";
+import { auth, db } from "../lib/firebase";
+import { doc, getDoc } from "firebase/firestore";
 import { useRouter, Link } from "expo-router";
 import { colors } from "../constants/color";
 
@@ -14,7 +15,23 @@ export default function Login() {
   const onLogin = async () => {
     setErr(null);
     try {
-      await signInWithEmailAndPassword(auth, email.trim(), pwd);
+      const cred = await signInWithEmailAndPassword(auth, email.trim(), pwd);
+      
+      // Synchroniser le displayName depuis Firestore si nécessaire
+      if (!cred.user.displayName) {
+        try {
+          const userDoc = await getDoc(doc(db, "users", cred.user.uid));
+          if (userDoc.exists()) {
+            const displayName = userDoc.data().displayName;
+            if (displayName) {
+              await updateProfile(cred.user, { displayName });
+            }
+          }
+        } catch (e) {
+          console.log("Erreur sync displayName:", e);
+        }
+      }
+      
       router.replace("/(main)/feed"); 
     } catch (e: any) {
       setErr(e.message ?? "Connexion impossible");
