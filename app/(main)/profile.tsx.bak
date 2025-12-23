@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -58,7 +58,7 @@ export default function ProfileScreen() {
   const [recentActivities, setRecentActivities] = useState<Activity[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // recup uid et email
+  //recup l'uid et  email
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
       if (!u) {
@@ -70,7 +70,7 @@ export default function ProfileScreen() {
       }
       setUserEmail(u.email ?? null);
 
-      // profil firestore
+      //profil Firestore
       const ref = doc(db, "users", u.uid);
       getDoc(ref).then((snap) => {
         if (snap.exists()) {
@@ -79,7 +79,7 @@ export default function ProfileScreen() {
         setLoading(false);
       });
 
-      // activites recentes
+      //activites recentes
       const q = query(
         collection(db, "activities"),
         where("ownerId", "==", u.uid),
@@ -145,35 +145,30 @@ export default function ProfileScreen() {
                 <Text style={s.cardTitle}>Infos étudiantes</Text>
               </View>
 
-              <View style={s.row}>
-                <Ionicons name="calendar-outline" size={18} color={colors.muted} />
-                <Text style={s.label}>Année :</Text>
-                <Text style={s.value}>{userProfile?.year ?? "Non renseigné"}</Text>
-              </View>
+        <View style={s.row}>
+          <Text style={s.label}>Année :</Text>
+          <Text style={s.value}>{userProfile?.year ?? "Non renseigné"}</Text>
+        </View>
 
-              <View style={s.row}>
-                <Ionicons name="book-outline" size={18} color={colors.muted} />
-                <Text style={s.label}>Formation :</Text>
-                <Text style={s.value}>{userProfile?.program ?? "Non renseigné"}</Text>
-              </View>
+        <View style={s.row}>
+          <Text style={s.label}>Formation :</Text>
+          <Text style={s.value}>{userProfile?.program ?? "Non renseigné"}</Text>
+        </View>
 
-              <View style={s.row}>
-                <Ionicons name="heart-outline" size={18} color={colors.muted} />
-                <Text style={s.label}>Centres d'intérêt :</Text>
-                <Text style={s.value}>
-                  {userProfile?.interests && userProfile.interests.length > 0
-                    ? userProfile.interests.join(" · ")
-                    : "Non renseigné"}
-                </Text>
-              </View>
+        <View style={s.row}>
+          <Text style={s.label}>Centres d’intérêt :</Text>
+          <Text style={s.value}>
+            {userProfile?.interests && userProfile.interests.length > 0
+              ? userProfile.interests.join(" · ")
+              : "Non renseigné"}
+          </Text>
+        </View>
 
-              <View style={s.row}>
-                <Ionicons name="person-outline" size={18} color={colors.muted} />
-                <Text style={s.label}>Bio :</Text>
-                <Text style={s.value}>{userProfile?.bio ?? "Non renseigné"}</Text>
-              </View>
-            </View>
-          </AnimatedCard>
+        <View style={s.row}>
+          <Text style={s.label}>Bio :</Text>
+          <Text style={s.value}>{userProfile?.bio ?? "Non renseigné"}</Text>
+        </View>
+      </View>
 
           {/* Activités récentes */}
           <AnimatedCard delay={200}>
@@ -184,40 +179,37 @@ export default function ProfileScreen() {
               </View>
 
               {recentActivities.length === 0 ? (
-                <View style={{ marginTop: 8 }}>
-                  <Text style={s.emptyLine}>
-                    Tu n'as pas encore créé d'activité.
-                  </Text>
-                  <Text style={s.emptyLine}>
-                    Crée ta première sortie depuis l'onglet Activités.
-                  </Text>
-                </View>
-              ) : (
-                recentActivities.map((act) => (
-                  <TouchableOpacity 
-                    key={act.id} 
-                    style={s.activityRow}
-                    onPress={() => router.push(`/(main)/activity-details?id=${act.id}` as any)}
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons name="flash-outline" size={20} color={colors.primary} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={s.activityTitle}>{act.title}</Text>
-                      {act.location ? (
-                        <Text style={s.activityLocation}>{act.location}</Text>
-                      ) : null}
-                      <Text style={s.activityDate}>
-                        {formatDateFR(act.date)}
-                      </Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={20} color={colors.muted} />
-                  </TouchableOpacity>
-                ))
-              )}
-            </View>
-          </AnimatedCard>
-        </>
-      )}
+          <View style={{ marginTop: 8 }}>
+            <Text style={s.emptyLine}>
+              Tu n’as pas encore créé d’activité.
+            </Text>
+            <Text style={s.emptyLine}>
+              Crée ta première sortie depuis l’onglet Activités.
+            </Text>
+          </View>
+        ) : (
+          recentActivities.map((act) => (
+            <TouchableOpacity 
+              key={act.id} 
+              style={s.activityRow}
+              onPress={() => router.push(`/(main)/activity-details?id=${act.id}` as any)}
+              activeOpacity={0.7}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={s.activityTitle}>{act.title}</Text>
+                {act.location ? (
+                  <Text style={s.activityLocation}>{act.location}</Text>
+                ) : null}
+              </View>
+              <View style={{ alignItems: "flex-end" }}>
+                <Text style={s.activityDate}>
+                  {formatDateFR(act.date)}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          ))
+        )}
+      </View>
     </ScrollView>
   );
 }
@@ -324,6 +316,12 @@ const s = StyleSheet.create({
     fontWeight: "600",
     marginBottom: 4,
   },
+  locationRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginTop: 2,
+  },
   activityLocation: {
     color: colors.muted,
     fontSize: 13,
@@ -331,6 +329,96 @@ const s = StyleSheet.create({
   activityDate: {
     color: colors.muted,
     fontSize: 12,
-    marginTop: 2,
+    marginBottom: 4,
+  },
+});
+    marginRight: 16,
+  },
+  avatarText: {
+    color: colors.primary,
+    fontSize: 28,
+    fontWeight: "700",
+  },
+  title: {
+    color: colors.text,
+    fontSize: 24,
+    fontWeight: "800",
+    letterSpacing: -0.5,
+  },
+  email: {
+    color: colors.muted,
+    fontSize: 14,
+    marginTop: 4,
+  },
+  editBtn: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.primary,
+  },
+  editBtnText: {
+    color: colors.primary,
+    fontWeight: "700",
+    fontSize: 14,
+  },
+  card: {
+    backgroundColor: "#020617",
+    borderRadius: 20,
+    padding: 20,
+    marginBottom: 20,
+  },
+  cardTitle: {
+    color: colors.text,
+    fontSize: 20,
+    fontWeight: "700",
+    marginBottom: 20,
+    letterSpacing: -0.3,
+  },
+  row: {
+    flexDirection: "row",
+    marginBottom: 16,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#0f172a",
+  },
+  label: {
+    color: colors.muted,
+    width: 140,
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  value: {
+    color: colors.text,
+    flex: 1,
+    fontSize: 15,
+  },
+  emptyLine: {
+    color: colors.muted,
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  activityRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    backgroundColor: "#0f172a",
+    borderRadius: 14,
+    marginTop: 12,
+  },
+  activityTitle: {
+    color: colors.text,
+    fontWeight: "700",
+    fontSize: 16,
+    marginBottom: 4,
+  },
+  activityLocation: {
+    color: colors.muted,
+    fontSize: 14,
+  },
+  activityDate: {
+    color: colors.muted,
+    fontSize: 13,
   },
 });

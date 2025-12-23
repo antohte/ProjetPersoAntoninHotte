@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { View, Text, TextInput, TouchableOpacity, StyleSheet } from "react-native";
-import { createUserWithEmailAndPassword } from "firebase/auth";
+import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
 import { auth, db } from "../lib/firebase";
 import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 import { useRouter, Link } from "expo-router";
@@ -18,6 +18,13 @@ export default function Register() {
     const cred = await createUserWithEmailAndPassword(auth, email.trim(), pwd);
 
     const pseudo = email.split("@")[0]; 
+    
+    // Mettre à jour le profil Firebase Auth
+    await updateProfile(cred.user, {
+      displayName: pseudo,
+    });
+    
+    // Enregistrer dans Firestore
     await setDoc(doc(db, "users", cred.user.uid), {
       email: email.trim(),
       createdAt: serverTimestamp(),

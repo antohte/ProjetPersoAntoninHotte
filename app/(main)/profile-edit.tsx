@@ -3,6 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, Activi
 import { useRouter } from "expo-router";
 import { auth, db } from "../../lib/firebase";
 import { doc, getDoc, serverTimestamp, updateDoc } from "firebase/firestore";
+import { updateProfile } from "firebase/auth";
 import { colors } from "../../constants/color";
 
 const YEAR_OPTIONS = ["L1", "L2", "L3", "M1", "M2"];
@@ -72,6 +73,13 @@ export default function ProfileEditScreen() {
 
     try {
       setSaving(true);
+      
+      // Mettre à jour Firebase Auth
+      await updateProfile(user, {
+        displayName: dn,
+      });
+      
+      // Mettre à jour Firestore
       await updateDoc(doc(db, "users", user.uid), {
         displayName: dn,
         program: pr,
@@ -80,6 +88,7 @@ export default function ProfileEditScreen() {
         bio: bi,
         updatedAt: serverTimestamp(),
       });
+      
       Alert.alert("Profil mis à jour !");
       router.replace("/(main)/profile");
     } catch (e: any) {

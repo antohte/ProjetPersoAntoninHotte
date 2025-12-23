@@ -52,7 +52,14 @@ export default function MainLayout() {
             // et évite les titres chelous si on ouvre l’écran
             title: "Modifier le profil",
         }}
-/>
+      />
+      <Drawer.Screen
+        name="activity-details"
+        options={{
+            drawerItemStyle: { display: "none" },
+            title: "Détails de l'activité",
+        }}
+      />
 
     </Drawer>
   );
