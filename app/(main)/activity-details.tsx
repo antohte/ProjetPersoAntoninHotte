@@ -24,6 +24,10 @@ import {
   addDoc,
   getDoc,
   deleteDoc,
+  getDocs,
+  limit,
+  startAfter,
+  QueryDocumentSnapshot,
 } from "firebase/firestore";
 import { db, auth } from "../../lib/firebase";
 import { colors } from "../../constants/color";
@@ -33,6 +37,11 @@ import { useLocalSearchParams, router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
+import { UserAvatar } from "../../components/UserAvatar";
+import { Toast } from "../../components/ui/toast";
+import { LoadingButton } from "../../components/ui/loading-button";
+import { EmptyState } from "../../components/ui/empty-state";
+import { PulsingButton } from "../../components/ui/pulsing-button";
 
 type Activity = {
   id: string;
@@ -43,6 +52,7 @@ type Activity = {
   ownerId: string;
   creatorName?: string;
   participants: string[];
+  category?: string;
 };
 
 type Comment = {
@@ -53,6 +63,8 @@ type Comment = {
   createdAt?: Timestamp;
 };
 
+const COMMENTS_PER_PAGE = 10;
+
 export default function ActivityDetailsScreen() {
   const params = useLocalSearchParams();
   const activityId = params.id as string;
@@ -61,10 +73,18 @@ export default function ActivityDetailsScreen() {
   const [comments, setComments] = useState<Comment[]>([]);
   const [draftComment, setDraftComment] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadingComments, setLoadingComments] = useState(false);
+  const [hasMoreComments, setHasMoreComments] = useState(true);
+  const [lastCommentDoc, setLastCommentDoc] = useState<QueryDocumentSnapshot | null>(null);
+  const [sendingComment, setSendingComment] = useState(false);
+  const [toastVisible, setToastVisible] = useState(false);
+  const [toastMessage, setToastMessage] = useState("");
+  const [toastType, setToastType] = useState<"success" | "error" | "info">("success");
   
   // animation values
   const fadeAnim = useState(new Animated.Value(0))[0];
   const slideAnim = useState(new Animated.Value(30))[0];
+  const commentAnim = useState(new Animated.Value(0))[0];
 
   const user = auth.currentUser;
 
@@ -84,15 +104,15 @@ export default function ActivityDetailsScreen() {
     ]).start();
   }, []);
 
-  // recuperer activite
+  // recuperer activite utiliser getDocs au lieu de onSnapshot pour reduire les couts
   useEffect(() => {
     if (!activityId) return;
 
-    const docRef = doc(db, "activities", activityId);
-    
-    const unsub = onSnapshot(
-      docRef,
-      (docSnap) => {
+    const loadActivity = async () => {
+      try {
+        const docRef = doc(db, "activities", activityId);
+        const docSnap = await getDoc(docRef);
+        
         if (docSnap.exists()) {
           const data = docSnap.data() as any;
           setActivity({
@@ -111,46 +131,78 @@ export default function ActivityDetailsScreen() {
           });
         }
         setLoading(false);
-      },
-      (err) => {
+      } catch (err) {
         console.log("Erreur chargement activité :", err);
         setLoading(false);
       }
-    );
+    };
 
-    return () => unsub();
+    loadActivity();
   }, [activityId]);
 
-  // recuperer commentaires
-  useEffect(() => {
+  // charger les commentaires avec pagination
+  const loadComments = async (isLoadMore = false) => {
     if (!activityId) return;
 
-    const q = query(
-      collection(db, "activities", activityId, "comments"),
-      orderBy("createdAt", "asc")
-    );
-
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const list: Comment[] = snap.docs.map((d) => {
-          const data = d.data() as any;
-          return {
-            id: d.id,
-            text: data.text,
-            userId: data.userId,
-            userName: data.userName,
-            createdAt: data.createdAt,
-          };
-        });
-        setComments(list);
-      },
-      (err) => {
-        console.log("Erreur commentaires :", err);
+    try {
+      if (isLoadMore) {
+        setLoadingComments(true);
       }
-    );
 
-    return () => unsub();
+      let q = query(
+        collection(db, "activities", activityId, "comments"),
+        orderBy("createdAt", "asc"),
+        limit(COMMENTS_PER_PAGE)
+      );
+
+      if (isLoadMore && lastCommentDoc) {
+        q = query(
+          collection(db, "activities", activityId, "comments"),
+          orderBy("createdAt", "asc"),
+          startAfter(lastCommentDoc),
+          limit(COMMENTS_PER_PAGE)
+        );
+      }
+
+      const snap = await getDocs(q);
+
+      if (snap.empty) {
+        setHasMoreComments(false);
+        setLoadingComments(false);
+        return;
+      }
+
+      const list: Comment[] = snap.docs.map((d) => {
+        const data = d.data() as any;
+        return {
+          id: d.id,
+          text: data.text,
+          userId: data.userId,
+          userName: data.userName,
+          createdAt: data.createdAt,
+        };
+      });
+
+      if (isLoadMore) {
+        setComments((prev) => [...prev, ...list]);
+      } else {
+        setComments(list);
+      }
+
+      setLastCommentDoc(snap.docs[snap.docs.length - 1]);
+      setHasMoreComments(snap.docs.length === COMMENTS_PER_PAGE);
+      setLoadingComments(false);
+    } catch (err) {
+      console.log("Erreur commentaires :", err);
+      setLoadingComments(false);
+    }
+  };
+
+  // chargement initial des commentaires
+  useEffect(() => {
+    if (activityId) {
+      loadComments();
+    }
   }, [activityId]);
 
   const toggleParticipation = async () => {
@@ -173,8 +225,9 @@ export default function ActivityDetailsScreen() {
     const txt = draftComment.trim();
     if (!txt || !user) return;
 
+    setSendingComment(true);
     try {
-      // recuperer displayname depuis firestore si disponible
+      // recuperer displayname depuis firestore si dispo
       let userName = user.displayName || "";
       
       if (!userName) {
@@ -188,7 +241,7 @@ export default function ActivityDetailsScreen() {
         }
       }
       
-      // fallback sur email uniquement en dernier recours
+      // fallback sur email en dernier recours
       if (!userName) {
         userName = user.email?.split("@")[0] || "Utilisateur";
       }
@@ -201,8 +254,31 @@ export default function ActivityDetailsScreen() {
       });
 
       setDraftComment("");
+      
+      // afficher toast
+      setToastMessage("Commentaire envoyé");
+      setToastType("success");
+      setToastVisible(true);
+      
+      // animation du nouveau commentaire
+      commentAnim.setValue(0);
+      Animated.timing(commentAnim, {
+        toValue: 1,
+        duration: 400,
+        useNativeDriver: true,
+      }).start();
+      
+      // recharger les commentaires apres lajout
+      setLastCommentDoc(null);
+      setHasMoreComments(true);
+      await loadComments();
     } catch (e) {
       console.log("Erreur ajout commentaire :", e);
+      setToastMessage("Erreur lors de l'envoi");
+      setToastType("error");
+      setToastVisible(true);
+    } finally {
+      setSendingComment(false);
     }
   };
 
@@ -230,11 +306,15 @@ export default function ActivityDetailsScreen() {
           onPress: async () => {
             try {
               await deleteDoc(doc(db, "activities", activityId));
-              Alert.alert("Activité supprimée");
-              router.back();
+              setToastMessage("Activité supprimée");
+              setToastType("success");
+              setToastVisible(true);
+              setTimeout(() => router.back(), 1000);
             } catch (e) {
               console.log("Erreur suppression activité :", e);
-              Alert.alert("Erreur", "Impossible de supprimer l'activité");
+              setToastMessage("Impossible de supprimer l'activité");
+              setToastType("error");
+              setToastVisible(true);
             }
           },
         },
@@ -290,24 +370,28 @@ export default function ActivityDetailsScreen() {
       </View>
 
       <ScrollView style={s.content} contentContainerStyle={s.contentContainer}>
+        <Toast 
+          visible={toastVisible} 
+          message={toastMessage} 
+          type={toastType}
+          onHide={() => setToastVisible(false)}
+        />
         <Animated.View 
           style={{
             opacity: fadeAnim,
             transform: [{ translateY: slideAnim }],
           }}
         >
-          {/* En-tête avec créateur */}
+          {/* entete avec createur */}
           <View style={s.creatorSection}>
-            <View style={s.avatarCircle}>
-              <Text style={s.avatarText}>{initial}</Text>
-            </View>
+            <UserAvatar userId={activity.ownerId} size={48} userName={displayName} />
             <View style={{ flex: 1 }}>
               <Text style={s.creatorName}>{displayName}</Text>
               <Badge variant="default">Organisateur</Badge>
             </View>
           </View>
 
-          {/* Titre et description */}
+          {/* titre et description */}
           <View style={s.mainSection}>
             <Text style={s.title}>{activity.title}</Text>
             {activity.description ? (
@@ -317,7 +401,7 @@ export default function ActivityDetailsScreen() {
             )}
           </View>
 
-          {/* Informations de l'activité */}
+          {/* informations de lactivite */}
           <View style={s.infoSection}>
             <Text style={s.sectionTitle}>Informations</Text>
             
@@ -354,7 +438,7 @@ export default function ActivityDetailsScreen() {
             </View>
           </View>
 
-          {/* Liste des participants */}
+          {/* liste des participants */}
           <View style={s.participantsSection}>
             <View style={s.sectionHeader}>
               <Ionicons name="people-outline" size={20} color={colors.text} />
@@ -363,9 +447,11 @@ export default function ActivityDetailsScreen() {
               </Text>
             </View>
             {activity.participants.length === 0 ? (
-              <Text style={s.noParticipants}>
-                Aucun participant pour le moment
-              </Text>
+              <EmptyState 
+                icon="people-outline" 
+                title="Aucun participant" 
+                description="Sois le premier à rejoindre cette activité"
+              />
             ) : (
               <View style={s.participantsList}>
                 {activity.participants.map((participantId, index) => (
@@ -384,20 +470,23 @@ export default function ActivityDetailsScreen() {
           )}
         </View>
 
-          {/* Bouton de participation */}
-          <Button
-            variant={isPast ? "ghost" : isParticipant ? "success" : "primary"}
-            disabled={isPast}
-            onPress={toggleParticipation}
-          >
-            {isPast
-              ? "Activité terminée"
-              : isParticipant
-              ? "Je participe"
-              : "Participer à cette activité"}
-          </Button>
+          {/* bouton de participation */}
+          {isPast ? (
+            <Button variant="ghost" disabled onPress={() => {}}>
+              Activité terminée
+            </Button>
+          ) : isParticipant ? (
+            <Button variant="success" onPress={toggleParticipation}>
+              Je participe
+            </Button>
+          ) : (
+            <PulsingButton
+              title="Participer à cette activité"
+              onPress={toggleParticipation}
+            />
+          )}
 
-          {/* Section commentaires */}
+          {/* section commentaires */}
           <View style={s.commentsSection}>
             <View style={s.sectionHeader}>
               <Ionicons name="chatbubbles-outline" size={20} color={colors.text} />
@@ -407,15 +496,18 @@ export default function ActivityDetailsScreen() {
             </View>
 
             {comments.length === 0 ? (
-              <Text style={s.noComments}>
-                Aucun commentaire. Soyez le premier à commenter !
-              </Text>
+              <EmptyState 
+                icon="chatbubble-outline" 
+                title="Aucun commentaire" 
+                description="Sois le premier à commenter cette activité"
+              />
             ) : (
               <View style={s.commentsList}>
                 {comments.map((comment) => {
                 const isOwnComment = user && comment.userId === user.uid;
                 return (
                   <View key={comment.id} style={s.commentItem}>
+                    <UserAvatar userId={comment.userId} size={32} userName={comment.userName || "Anonyme"} />
                     <View style={s.commentContent}>
                       <View style={s.commentHeader}>
                         <View style={s.commentAuthorBlock}>
@@ -448,7 +540,22 @@ export default function ActivityDetailsScreen() {
             </View>
           )}
 
-          {/* Input pour ajouter un commentaire */}
+          {/* bouton charger plus de commentaires */}
+          {hasMoreComments && comments.length > 0 && (
+            <TouchableOpacity
+              style={s.loadMoreCommentsBtn}
+              onPress={() => loadComments(true)}
+              disabled={loadingComments}
+            >
+              {loadingComments ? (
+                <Text style={s.loadMoreCommentsText}>Chargement...</Text>
+              ) : (
+                <Text style={s.loadMoreCommentsText}>Charger plus de commentaires</Text>
+              )}
+            </TouchableOpacity>
+          )}
+
+          {/* input pour ajouter un commentaire */}
           <View style={s.commentInputSection}>
             <TextInput
               style={s.commentInput}
@@ -458,20 +565,13 @@ export default function ActivityDetailsScreen() {
               onChangeText={setDraftComment}
               multiline
             />
-            <TouchableOpacity
-              style={[
-                s.sendBtn,
-                !draftComment.trim() && s.sendBtnDisabled,
-              ]}
-              onPress={handleSendComment}
+            <LoadingButton
+              title="Envoyer"
+              loading={sendingComment}
               disabled={!draftComment.trim()}
-            >
-              <Ionicons 
-                name="send" 
-                size={20} 
-                color={!draftComment.trim() ? colors.muted : "#0b111f"} 
-              />
-            </TouchableOpacity>
+              onPress={handleSendComment}
+              buttonStyle={s.sendBtn}
+            />
           </View>
         </View>
         </Animated.View>
@@ -729,9 +829,11 @@ const s = StyleSheet.create({
     marginBottom: 20,
   },
   commentItem: {
+    flexDirection: "row",
     backgroundColor: "#0f172a",
     borderRadius: 14,
     padding: 16,
+    gap: 12,
   },
   commentContent: {
     flex: 1,
@@ -803,5 +905,19 @@ const s = StyleSheet.create({
     color: "#0b111f",
     fontWeight: "700",
     fontSize: 15,
+  },
+  loadMoreCommentsBtn: {
+    backgroundColor: "#1e293b",
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    alignItems: "center",
+    marginTop: 16,
+    marginBottom: 20,
+  },
+  loadMoreCommentsText: {
+    color: colors.text,
+    fontWeight: "600",
+    fontSize: 14,
   },
 });

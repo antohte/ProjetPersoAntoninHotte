@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Alert } from "react-native";
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Alert, Image } from "react-native";
 import { useRouter } from "expo-router";
 import { auth, db } from "../../lib/firebase";
 import { doc, getDoc, serverTimestamp, updateDoc } from "firebase/firestore";
 import { updateProfile } from "firebase/auth";
 import { colors } from "../../constants/color";
+import * as ImagePicker from "expo-image-picker";
+import { uploadProfilePicture } from "../../lib/storage";
+import { Ionicons } from "@expo/vector-icons";
 
 const YEAR_OPTIONS = ["L1", "L2", "L3", "M1", "M2"];
 
@@ -19,6 +22,8 @@ export default function ProfileEditScreen() {
   const [year, setYear] = useState("");
   const [interestsInput, setInterestsInput] = useState("");
   const [bio, setBio] = useState("");
+  const [photoURL, setPhotoURL] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     const load = async () => {
@@ -37,6 +42,7 @@ export default function ProfileEditScreen() {
           setYear(d.year ?? "");
           setBio(d.bio ?? "");
           setInterestsInput(Array.isArray(d.interests) ? d.interests.join(", ") : "");
+          setPhotoURL(d.photoURL ?? user.photoURL ?? null);
         }
       } catch (e: any) {
         setErr(e.message ?? "Impossible de charger le profil");
@@ -58,6 +64,37 @@ export default function ProfileEditScreen() {
     [interestsInput]
   );
 
+  const pickImage = async () => {
+    // demander la permission
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("Permission refusee", "On a besoin de la permission pour acceder a la galerie");
+      return;
+    }
+
+    // ouvrir la galerie
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      setUploading(true);
+      try {
+        // upload vers firebase storage
+        const downloadUrl = await uploadProfilePicture(result.assets[0].uri);
+        setPhotoURL(downloadUrl);
+        Alert.alert("Photo mise a jour", "Pense a enregistrer ton profil");
+      } catch (error: any) {
+        Alert.alert("Erreur", error.message || "Impossible d uploader la photo");
+      } finally {
+        setUploading(false);
+      }
+    }
+  };
+
   const onSave = async () => {
     setErr(null);
     const dn = displayName.trim();
@@ -77,6 +114,7 @@ export default function ProfileEditScreen() {
       // Mettre à jour Firebase Auth
       await updateProfile(user, {
         displayName: dn,
+        photoURL: photoURL || undefined,
       });
       
       // Mettre à jour Firestore
@@ -86,6 +124,7 @@ export default function ProfileEditScreen() {
         year,
         interests: interestsArray,
         bio: bi,
+        photoURL: photoURL || null,
         updatedAt: serverTimestamp(),
       });
       
@@ -109,6 +148,29 @@ export default function ProfileEditScreen() {
   return (
     <ScrollView style={s.container} contentContainerStyle={{ paddingBottom: 40 }}>
       <Text style={s.title}>Modifier mon profil</Text>
+
+      {/* Photo de profil */}
+      <View style={s.photoSection}>
+        <View style={s.photoContainer}>
+          {photoURL ? (
+            <Image source={{ uri: photoURL }} style={s.photo} />
+          ) : (
+            <View style={s.photoPlaceholder}>
+              <Ionicons name="person" size={50} color={colors.muted} />
+            </View>
+          )}
+        </View>
+        <TouchableOpacity
+          style={[s.photoBtn, uploading && { opacity: 0.6 }]}
+          onPress={pickImage}
+          disabled={uploading}
+        >
+          <Ionicons name="camera" size={20} color={colors.text} />
+          <Text style={s.photoBtnText}>
+            {uploading ? "Upload..." : "Changer la photo"}
+          </Text>
+        </TouchableOpacity>
+      </View>
 
       <Text style={s.label}>Nom affiché</Text>
       <TextInput style={s.input} placeholder="Ex. Antonin" placeholderTextColor={colors.muted}
@@ -169,4 +231,10 @@ const s = StyleSheet.create({
   yearPillActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   yearText: { color: colors.text, fontWeight: "700" },
   yearTextActive: { color: "#0b111f" },
+  photoSection: { alignItems: "center", marginVertical: 20 },
+  photoContainer: { marginBottom: 16 },
+  photo: { width: 120, height: 120, borderRadius: 60, borderWidth: 3, borderColor: colors.primary },
+  photoPlaceholder: { width: 120, height: 120, borderRadius: 60, backgroundColor: "#111827", borderWidth: 2, borderColor: colors.border, justifyContent: "center", alignItems: "center" },
+  photoBtn: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 10, paddingHorizontal: 16, borderRadius: 999, backgroundColor: "#111827", borderWidth: 1, borderColor: colors.border },
+  photoBtnText: { color: colors.text, fontWeight: "700" },
 });
