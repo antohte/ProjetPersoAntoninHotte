@@ -21,6 +21,16 @@ import {
 } from "firebase/firestore";
 import { auth, db } from "../../lib/firebase";
 import { colors } from "../../constants/color";
+import { Ionicons } from "@expo/vector-icons";
+
+const CATEGORIES = [
+  { id: "bar", label: "Bar", icon: "beer" },
+  { id: "sport", label: "Sport", icon: "football" },
+  { id: "revision", label: "Révision", icon: "book" },
+  { id: "culture", label: "Culture", icon: "color-palette" },
+  { id: "soiree", label: "Soirée", icon: "musical-notes" },
+  { id: "autre", label: "Autre", icon: "ellipsis-horizontal" },
+] as const;
 
 export default function CreateActivityScreen() {
   const router = useRouter();
@@ -28,6 +38,7 @@ export default function CreateActivityScreen() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [place, setPlace] = useState("");
+  const [category, setCategory] = useState("autre");
   const [when, setWhen] = useState<Date>(new Date());
   const [showPicker, setShowPicker] = useState(false);
 
@@ -74,7 +85,7 @@ export default function CreateActivityScreen() {
 
     setSaving(true);
     try {
-      // recuperer displayname depuis firestore si disponible
+      // recuperer displayname depuis firestore si dispo
       let creatorName = user.displayName || "";
       
       if (!creatorName) {
@@ -88,7 +99,7 @@ export default function CreateActivityScreen() {
         }
       }
       
-      // fallback sur email uniquement en dernier recours
+      // fallback sur email en dernier recours
       if (!creatorName) {
         creatorName = user.email?.split("@")[0] || "Utilisateur";
       }
@@ -100,18 +111,20 @@ export default function CreateActivityScreen() {
         date: Timestamp.fromDate(when),
         ownerId: user.uid,
         creatorName,
+        category,
         participants: [] as string[],
         createdAt: Timestamp.now(),
       });
 
       Alert.alert("Activité créée !", "Ta sortie a bien été enregistrée.");
-      //reset formulaire
+      // reset formulaire
       setTitle("");
       setDescription("");
       setPlace("");
+      setCategory("autre");
       setWhen(new Date());
 
-      //back au feed
+      // back au feed
       router.back();
     } catch (e: any) {
       console.error("Erreur création activité:", e);
@@ -159,6 +172,39 @@ export default function CreateActivityScreen() {
         value={place}
         onChangeText={setPlace}
       />
+
+      <Text style={s.label}>Catégorie</Text>
+      <ScrollView 
+        horizontal 
+        showsHorizontalScrollIndicator={false}
+        style={s.categoryScroll}
+        contentContainerStyle={s.categoryScrollContent}
+      >
+        {CATEGORIES.map((cat) => (
+          <TouchableOpacity
+            key={cat.id}
+            style={[
+              s.categoryChip,
+              category === cat.id && s.categoryChipActive,
+            ]}
+            onPress={() => setCategory(cat.id)}
+          >
+            <Ionicons 
+              name={cat.icon as any} 
+              size={18} 
+              color={category === cat.id ? "#0b111f" : colors.text} 
+            />
+            <Text
+              style={[
+                s.categoryChipText,
+                category === cat.id && s.categoryChipTextActive,
+              ]}
+            >
+              {cat.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
 
       <Text style={s.label}>Date et heure</Text>
       <TouchableOpacity
@@ -249,5 +295,34 @@ const s = StyleSheet.create({
     color: "#0b111f",
     fontWeight: "800",
     fontSize: 16,
+  },
+  categoryScroll: {
+    marginVertical: 8,
+  },
+  categoryScrollContent: {
+    gap: 8,
+  },
+  categoryChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#020617",
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: "#111827",
+  },
+  categoryChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  categoryChipText: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  categoryChipTextActive: {
+    color: "#0b111f",
   },
 });

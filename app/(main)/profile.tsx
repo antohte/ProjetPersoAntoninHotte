@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Animated,
+  Image,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { onAuthStateChanged } from "firebase/auth";
@@ -36,6 +37,7 @@ type UserProfile = {
   year?: string;
   interests?: string[];
   bio?: string;
+  photoURL?: string;
 };
 
 type Activity = {
@@ -57,6 +59,7 @@ export default function ProfileScreen() {
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [recentActivities, setRecentActivities] = useState<Activity[]>([]);
   const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState({ created: 0, participated: 0 });
 
   // recup uid et email
   useEffect(() => {
@@ -95,6 +98,28 @@ export default function ProfileScreen() {
         setRecentActivities(list);
       });
 
+      // compter les activites creees
+      const qCreated = query(
+        collection(db, "activities"),
+        where("ownerId", "==", u.uid)
+      );
+      getDoc(doc(db, "activities", "count")).then(() => {
+        onSnapshot(qCreated, (snap) => {
+          setStats((prev) => ({ ...prev, created: snap.size }));
+        });
+      });
+
+      // compter les participations
+      const qAll = query(collection(db, "activities"));
+      onSnapshot(qAll, (snap) => {
+        let count = 0;
+        snap.docs.forEach((d) => {
+          const participants = d.data().participants || [];
+          if (participants.includes(u.uid)) count++;
+        });
+        setStats((prev) => ({ ...prev, participated: count }));
+      });
+
       return () => {
         unsubActivities();
       };
@@ -120,9 +145,13 @@ export default function ProfileScreen() {
           {/* Header / avatar */}
           <AnimatedCard delay={0}>
             <View style={s.headerCard}>
-              <View style={s.avatar}>
-                <Text style={s.avatarText}>{initials}</Text>
-              </View>
+              {userProfile?.photoURL ? (
+                <Image source={{ uri: userProfile.photoURL }} style={s.avatarImage} />
+              ) : (
+                <View style={s.avatar}>
+                  <Text style={s.avatarText}>{initials}</Text>
+                </View>
+              )}
               <View style={{ flex: 1 }}>
                 <Text style={s.title}>Mon profil</Text>
                 <Text style={s.email}>{userEmail}</Text>
@@ -134,6 +163,27 @@ export default function ProfileScreen() {
               >
                 <Ionicons name="create-outline" size={20} color="#0b111f" />
               </TouchableOpacity>
+            </View>
+          </AnimatedCard>
+
+          {/* Stats */}
+          <AnimatedCard delay={50}>
+            <View style={s.card}>
+              <View style={s.cardHeader}>
+                <Ionicons name="stats-chart-outline" size={22} color={colors.primary} />
+                <Text style={s.cardTitle}>Statistiques</Text>
+              </View>
+              <View style={s.statsRow}>
+                <View style={s.statItem}>
+                  <Text style={s.statValue}>{stats.created}</Text>
+                  <Text style={s.statLabel}>Activites creees</Text>
+                </View>
+                <View style={s.statDivider} />
+                <View style={s.statItem}>
+                  <Text style={s.statValue}>{stats.participated}</Text>
+                  <Text style={s.statLabel}>Participations</Text>
+                </View>
+              </View>
             </View>
           </AnimatedCard>
 
@@ -245,6 +295,14 @@ const s = StyleSheet.create({
     justifyContent: "center",
     marginRight: 16,
   },
+  avatarImage: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    marginRight: 16,
+    borderWidth: 2,
+    borderColor: colors.primary,
+  },
   avatarText: {
     color: colors.text,
     fontSize: 24,
@@ -332,5 +390,31 @@ const s = StyleSheet.create({
     color: colors.muted,
     fontSize: 12,
     marginTop: 2,
+  },
+  statsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-around",
+    marginTop: 8,
+  },
+  statItem: {
+    alignItems: "center",
+    flex: 1,
+  },
+  statValue: {
+    color: colors.primary,
+    fontSize: 32,
+    fontWeight: "800",
+    marginBottom: 4,
+  },
+  statLabel: {
+    color: colors.muted,
+    fontSize: 13,
+    textAlign: "center",
+  },
+  statDivider: {
+    width: 1,
+    height: 40,
+    backgroundColor: "#0f172a",
   },
 });

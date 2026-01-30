@@ -1,0 +1,69 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Règles pour les utilisateurs
+    match /users/{userId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == userId;
+      
+      // Règles pour les push tokens
+      match /pushTokens/{tokenId} {
+        allow read: if request.auth != null && request.auth.uid == userId;
+        allow write: if request.auth != null && request.auth.uid == userId;
+      }
+      
+      // Règles pour les notifications
+      match /notifications/{notifId} {
+        allow read: if request.auth != null && request.auth.uid == userId;
+        allow write: if request.auth != null && request.auth.uid == userId;
+        allow delete: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+    
+    // Règles pour les activités
+    match /activities/{activityId} {
+      // Lecture : tout utilisateur authentifié
+      allow read: if request.auth != null;
+      
+      // Création : tout utilisateur authentifié
+      allow create: if request.auth != null
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.title is string
+        && request.resource.data.date is timestamp;
+      
+      // Mise à jour : uniquement le créateur ou pour ajouter/retirer des participants
+      allow update: if request.auth != null && (
+        // Le créateur peut tout modifier
+        resource.data.ownerId == request.auth.uid
+        // Ou n'importe qui peut s'ajouter/retirer des participants
+        || (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['participants'])
+        )
+      );
+      
+      // Suppression : uniquement le créateur
+      allow delete: if request.auth != null 
+        && resource.data.ownerId == request.auth.uid;
+      
+      // Règles pour les commentaires (sous-collection)
+      match /comments/{commentId} {
+        // Lecture : tout utilisateur authentifié
+        allow read: if request.auth != null;
+        
+        // Création : tout utilisateur authentifié
+        allow create: if request.auth != null
+          && request.resource.data.userId == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.createdAt is timestamp;
+        
+        // Suppression : uniquement l'auteur du commentaire
+        allow delete: if request.auth != null 
+          && resource.data.userId == request.auth.uid;
+        
+        // Pas de mise à jour des commentaires
+        allow update: if false;
+      }
+    }
+  }
+}

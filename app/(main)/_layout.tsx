@@ -2,8 +2,19 @@ import { Drawer } from "expo-router/drawer";
 import { colors } from "../../constants/color";
 import CustomDrawer from "../../components/CustomDrawer";
 import { Ionicons } from "@expo/vector-icons";
+import { useEffect } from "react";
+import { auth } from "../../lib/firebase";
+import { registerForPushNotificationsAsync } from "../../lib/notifications";
 
 export default function MainLayout() {
+  // enregistrer le token push au montage
+  useEffect(() => {
+    const user = auth.currentUser;
+    if (user) {
+      registerForPushNotificationsAsync(user.uid);
+    }
+  }, []);
+
   return (
     <Drawer
       drawerContent={(props) => <CustomDrawer {...props} />}
@@ -35,6 +46,13 @@ export default function MainLayout() {
         options={{
           title: "Créer une activité",
           drawerIcon: ({ color, size }) => <Ionicons name="add-circle" size={size} color={color} />,
+        }}
+      />
+      <Drawer.Screen
+        name="notifications"
+        options={{
+          title: "Notifications",
+          drawerIcon: ({ color, size }) => <Ionicons name="notifications" size={size} color={color} />,
         }}
       />
       <Drawer.Screen

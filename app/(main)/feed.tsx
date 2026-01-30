@@ -22,6 +22,12 @@ import {
   addDoc,
   deleteDoc,
   getDoc,
+  getDocs,
+  limit,
+  startAfter,
+  DocumentSnapshot,
+  QueryDocumentSnapshot,
+  where,
 } from "firebase/firestore";
 import { db, auth } from "../../lib/firebase";
 import { colors } from "../../constants/color";
@@ -32,6 +38,8 @@ import { AnimatedCard } from "../../components/ui/animated-card";
 import { SkeletonActivityCard } from "../../components/ui/skeleton";
 import { Badge } from "../../components/ui/badge";
 import { Ionicons } from "@expo/vector-icons";
+import { UserAvatar } from "../../components/UserAvatar";
+import { EmptyState } from "../../components/ui/empty-state";
 
 type Activity = {
   id: string;
@@ -42,7 +50,18 @@ type Activity = {
   ownerId: string;
   creatorName?: string;
   participants: string[];
+  category?: string;
 };
+
+const CATEGORIES = [
+  { id: "all", label: "Tout", icon: "apps" },
+  { id: "bar", label: "Bar", icon: "beer" },
+  { id: "sport", label: "Sport", icon: "football" },
+  { id: "revision", label: "Révision", icon: "book" },
+  { id: "culture", label: "Culture", icon: "color-palette" },
+  { id: "soiree", label: "Soirée", icon: "musical-notes" },
+  { id: "autre", label: "Autre", icon: "ellipsis-horizontal" },
+] as const;
 
 type Comment = {
   id: string;
@@ -87,18 +106,26 @@ const ActivityCard: React.FC<ActivityCardProps> = ({
 
   const previewComments = comments.slice(0, 3);
   const moreCount = comments.length - previewComments.length;
+  
+  const categoryData = CATEGORIES.find(c => c.id === activity.category);
+  const categoryLabel = categoryData?.label || "Autre";
+  const categoryIcon = categoryData?.icon || "ellipsis-horizontal";
 
   return (
     <View style={s.card}>
       {/*style story/post insta */}
       <TouchableOpacity onPress={onCardPress} activeOpacity={0.9}>
         <View style={s.cardHeader}>
-          <View style={s.avatarCircle}>
-            <Text style={s.avatarText}>{initial}</Text>
-          </View>
+          <UserAvatar userId={activity.ownerId} size={40} userName={displayName} />
           <View style={{ flex: 1 }}>
             <Text style={s.creatorName}>{displayName}</Text>
           </View>
+          {activity.category && (
+            <View style={s.categoryBadge}>
+              <Ionicons name={categoryIcon as any} size={12} color={colors.primary} />
+              <Text style={s.categoryBadgeText}>{categoryLabel}</Text>
+            </View>
+          )}
         </View>
 
         {/* post */}
@@ -163,7 +190,8 @@ const ActivityCard: React.FC<ActivityCardProps> = ({
           const isOwnComment = auth.currentUser && c.userId === auth.currentUser.uid;
           return (
             <View key={c.id} style={s.commentLineContainer}>
-              <View style={{ flex: 1 }}>
+              <UserAvatar userId={c.userId} size={28} userName={c.userName} />
+              <View style={{ flex: 1, marginLeft: 8 }}>
                 <Text style={s.commentLine}>
                   <Text style={s.commentAuthor}>
                     {c.userName || "Anon"}
@@ -216,30 +244,68 @@ const ActivityCard: React.FC<ActivityCardProps> = ({
 
 // ecran feed
 
+const ACTIVITIES_PER_PAGE = 10;
+
 export default function FeedScreen() {
   const [activities, setActivities] = useState<Activity[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [lastDoc, setLastDoc] = useState<QueryDocumentSnapshot | null>(null);
   const [commentsByActivity, setCommentsByActivity] = useState<
     Record<string, Comment[]>
   >({});
   const [draftComments, setDraftComments] = useState<Record<string, string>>(
     {}
   );
+  
+  // Filtres
+  const [searchText, setSearchText] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("all");
+  const [showFilters, setShowFilters] = useState(false);
 
   const user = auth.currentUser;
 
-  // recup des activites triees
-  useEffect(() => {
-  const q = query(
-    collection(db, "activities"),
-    orderBy("date", "asc")
-  );
+  // charger les activites initial ou plus
+  const loadActivities = async (isLoadMore = false) => {
+    try {
+      if (isLoadMore) {
+        setLoadingMore(true);
+      } else {
+        setLoading(true);
+      }
 
-  const unsub = onSnapshot(
-    q,
-    (snap) => {
-      const list: Activity[] = snap.docs.map((d) => {
+      // construire la requete de base
+      const constraints: any[] = [];
+      
+      // filtre par categorie
+      if (selectedCategory !== "all") {
+        constraints.push(where("category", "==", selectedCategory));
+      }
+      
+      // toujours trier par date
+      constraints.push(orderBy("date", "asc"));
+      constraints.push(limit(ACTIVITIES_PER_PAGE));
+
+      let q = query(collection(db, "activities"), ...constraints);
+
+      // si chargement de plus, utiliser startAfter
+      if (isLoadMore && lastDoc) {
+        const constraintsWithPagination = [...constraints.slice(0, -1), startAfter(lastDoc), limit(ACTIVITIES_PER_PAGE)];
+        q = query(collection(db, "activities"), ...constraintsWithPagination);
+      }
+
+      const snap = await getDocs(q);
+      
+      if (snap.empty) {
+        setHasMore(false);
+        if (isLoadMore) setLoadingMore(false);
+        else setLoading(false);
+        return;
+      }
+
+      let list: Activity[] = snap.docs.map((d) => {
         const data = d.data() as any;
         return {
           id: d.id,
@@ -254,61 +320,105 @@ export default function FeedScreen() {
             data.ownerEmail ??
             "Utilisateur",
           participants: data.participants ?? [],
+          category: data.category ?? "autre",
         };
       });
-      setActivities(list);
-      setLoading(false);
-    },
-    (err) => {
+
+      // Filtrer côté client pour la recherche textuelle
+      if (searchText.trim()) {
+        const search = searchText.toLowerCase();
+        list = list.filter(
+          (a) =>
+            a.title.toLowerCase().includes(search) ||
+            a.description.toLowerCase().includes(search) ||
+            a.place.toLowerCase().includes(search)
+        );
+      }
+
+      if (isLoadMore) {
+        setActivities((prev) => [...prev, ...list]);
+      } else {
+        setActivities(list);
+      }
+
+      // mettre a jour le dernier doc
+      setLastDoc(snap.docs[snap.docs.length - 1]);
+      
+      // verifier sil y a plus de docs
+      setHasMore(snap.docs.length === ACTIVITIES_PER_PAGE);
+
+      if (isLoadMore) setLoadingMore(false);
+      else setLoading(false);
+    } catch (err) {
       console.log("Erreur chargement activités :", err);
-      setLoading(false);
+      if (isLoadMore) setLoadingMore(false);
+      else setLoading(false);
     }
-  );
+  };
 
-  return () => unsub();
-}, []);
+  // chargement initial et rechargement quand les filtres changent
+  useEffect(() => {
+    setLastDoc(null);
+    setHasMore(true);
+    loadActivities();
+  }, [selectedCategory, searchText]);
 
 
-  // abonnements commentaires
+  // charger commentaires pour les activites chargees (3 derniers seulement)
   useEffect(() => {
     const ids = activities.map((a) => a.id);
     if (ids.length === 0) return;
 
-    const unsubscribers = ids.map((id) => {
-      const q = query(
-        collection(db, "activities", id, "comments"),
-        orderBy("createdAt", "asc")
-      );
+    // utiliser getDocs au lieu de onSnapshot pour eviter les couts
+    const loadComments = async () => {
+      const commentPromises = ids.map(async (id) => {
+        const q = query(
+          collection(db, "activities", id, "comments"),
+          orderBy("createdAt", "desc"),
+          limit(3)
+        );
 
-      return onSnapshot(
-        q,
-        (snap) => {
-          const list: Comment[] = snap.docs.map((d) => {
-            const data = d.data() as any;
-            return {
-              id: d.id,
-              text: data.text,
-              userId: data.userId,
-              userName: data.userName,
-              createdAt: data.createdAt,
-            };
-          });
-          setCommentsByActivity((prev) => ({ ...prev, [id]: list }));
-        },
-        (err) => {
-          console.log("Erreur commentaires :", err);
-        }
-      );
-    });
+        const snap = await getDocs(q);
+        const list: Comment[] = snap.docs.map((d) => {
+          const data = d.data() as any;
+          return {
+            id: d.id,
+            text: data.text,
+            userId: data.userId,
+            userName: data.userName,
+            createdAt: data.createdAt,
+          };
+        });
+        
+        // inverser pour afficher du plus ancien au plus recent
+        return { id, comments: list.reverse() };
+      });
 
-    return () => {
-      unsubscribers.forEach((u) => u && u());
+      const results = await Promise.all(commentPromises);
+      const commentsMap: Record<string, Comment[]> = {};
+      results.forEach(({ id, comments }) => {
+        commentsMap[id] = comments;
+      });
+      setCommentsByActivity(commentsMap);
     };
+
+    loadComments().catch((err) => {
+      console.log("Erreur commentaires :", err);
+    });
   }, [JSON.stringify(activities.map((a) => a.id))]);
 
-  const onRefresh = () => {
+  const onRefresh = async () => {
     setRefreshing(true);
-    setTimeout(() => setRefreshing(false), 400);
+    setLastDoc(null);
+    setHasMore(true);
+    await loadActivities(false);
+    setRefreshing(false);
+  };
+
+  const handleLoadMore = () => {
+    if (!loadingMore && hasMore) {
+      loadActivities(true);
+    }
   };
 
   // participation
@@ -334,7 +444,7 @@ export default function FeedScreen() {
     if (!txt || !user) return;
 
     try {
-      // recuperer le displayname depuis firestore si disponible
+      // recuperer le displayname depuis firestore si dispo
       let userName = user.displayName || "";
       
       if (!userName) {
@@ -348,7 +458,7 @@ export default function FeedScreen() {
         }
       }
       
-      // fallback sur email uniquement en dernier recours
+      // fallback sur email en dernier recours
       if (!userName) {
         userName = user.email?.split("@")[0] || "Utilisateur";
       }
@@ -405,6 +515,64 @@ export default function FeedScreen() {
     >
       <Text style={s.pageTitle}>Activités</Text>
 
+      {/* barre de recherche */}
+      <View style={s.searchContainer}>
+        <View style={s.searchBar}>
+          <Ionicons name="search" size={20} color={colors.muted} />
+          <TextInput
+            style={s.searchInput}
+            placeholder="Rechercher une activité..."
+            placeholderTextColor={colors.muted}
+            value={searchText}
+            onChangeText={setSearchText}
+          />
+          {searchText.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchText("")}>
+              <Ionicons name="close-circle" size={20} color={colors.muted} />
+            </TouchableOpacity>
+          )}
+        </View>
+        <TouchableOpacity 
+          style={s.filterToggleBtn}
+          onPress={() => setShowFilters(!showFilters)}
+        >
+          <Ionicons name="options" size={20} color={colors.text} />
+        </TouchableOpacity>
+      </View>
+
+      {/* filtres par categorie */}
+      {showFilters && (
+        <View style={s.filtersContainer}>
+          <Text style={s.filterLabel}>Catégories</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.categoryScroll}>
+            {CATEGORIES.map((cat) => (
+              <TouchableOpacity
+                key={cat.id}
+                style={[
+                  s.categoryChip,
+                  selectedCategory === cat.id && s.categoryChipActive,
+                ]}
+                onPress={() => setSelectedCategory(cat.id)}
+              >
+                <Ionicons 
+                  name={cat.icon as any} 
+                  size={16} 
+                  color={selectedCategory === cat.id ? "#0b111f" : colors.text} 
+                />
+                <Text
+                  style={[
+                    s.categoryChipText,
+                    selectedCategory === cat.id && s.categoryChipTextActive,
+                  ]}
+                >
+                  {cat.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
       {loading ? (
         <>
           <SkeletonActivityCard />
@@ -413,12 +581,14 @@ export default function FeedScreen() {
         </>
       ) : (
         <>
-          {/*a venir */}
+          {/* a venir */}
           <Text style={s.sectionTitle}>Activités à venir</Text>
       {upcomingActivities.length === 0 ? (
-        <Text style={s.emptyText}>
-          Aucune activité à venir pour le moment.
-        </Text>
+        <EmptyState 
+          icon="calendar-outline" 
+          title="Aucune activité à venir" 
+          description="Crée une nouvelle activité pour commencer"
+        />
       ) : (
         upcomingActivities.map((act, index) => {
           const isParticipant =
@@ -449,10 +619,14 @@ export default function FeedScreen() {
         })
       )}
 
-          {/*terminee */}
+          {/* terminees */}
       <Text style={s.sectionTitle}>Activités terminées</Text>
       {pastActivities.length === 0 ? (
-        <Text style={s.emptyText}>Pas encore d’activité passée.</Text>
+        <EmptyState 
+          icon="checkmark-circle-outline" 
+          title="Aucune activité terminée" 
+          description="Les activités passées apparaîtront ici"
+        />
       ) : (
         pastActivities.map((act, index) => {
           const isParticipant =
@@ -483,6 +657,21 @@ export default function FeedScreen() {
         })
       )}
         </>
+      )}
+
+      {/* bouton charger plus */}
+      {!loading && hasMore && (
+        <TouchableOpacity
+          style={s.loadMoreBtn}
+          onPress={handleLoadMore}
+          disabled={loadingMore}
+        >
+          {loadingMore ? (
+            <Text style={s.loadMoreText}>Chargement...</Text>
+          ) : (
+            <Text style={s.loadMoreText}>Charger plus d'activités</Text>
+          )}
+        </TouchableOpacity>
       )}
     </ScrollView>
   );
@@ -552,6 +741,20 @@ const s = StyleSheet.create({
     color: colors.text,
     fontWeight: "700",
     fontSize: 14,
+  },
+  categoryBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#0f172a",
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    gap: 4,
+  },
+  categoryBadgeText: {
+    color: colors.primary,
+    fontSize: 11,
+    fontWeight: "600",
   },
   cardBody: {
     marginBottom: 16,
@@ -706,5 +909,87 @@ const s = StyleSheet.create({
   sendBtnText: {
     color: "#0b111f",
     fontWeight: "800",
+  },
+  loadMoreBtn: {
+    backgroundColor: colors.primary,
+    borderRadius: 12,
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    alignItems: "center",
+    marginTop: 20,
+    marginBottom: 20,
+  },
+  loadMoreText: {
+    color: "#0b111f",
+    fontWeight: "700",
+    fontSize: 15,
+  },
+  searchContainer: {
+    flexDirection: "row",
+    gap: 12,
+    marginBottom: 20,
+  },
+  searchBar: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#0f172a",
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: "#1e293b",
+    gap: 12,
+  },
+  searchInput: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 15,
+  },
+  filterToggleBtn: {
+    backgroundColor: "#0f172a",
+    borderRadius: 12,
+    width: 48,
+    height: 48,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#1e293b",
+  },
+  filtersContainer: {
+    marginBottom: 20,
+  },
+  filterLabel: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "600",
+    marginBottom: 12,
+  },
+  categoryScroll: {
+    flexGrow: 0,
+  },
+  categoryChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#0f172a",
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    marginRight: 8,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: "#1e293b",
+  },
+  categoryChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  categoryChipText: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  categoryChipTextActive: {
+    color: "#0b111f",
   },
 });

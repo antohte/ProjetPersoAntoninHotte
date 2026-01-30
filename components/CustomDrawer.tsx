@@ -24,8 +24,8 @@ export default function CustomDrawer(props: DrawerContentComponentProps) {
     <DrawerContentScrollView {...props} contentContainerStyle={{ paddingTop: 0 }}>
       {/* Header profil */}
       <View style={s.header}>
-        {userData?.avatarUrl ? (
-          <Image source={{ uri: userData.avatarUrl }} style={s.avatar} />
+        {userData?.photoURL ? (
+          <Image source={{ uri: userData.photoURL }} style={s.avatar} />
         ) : (
           <View style={[s.avatar, s.avatarFallback]}>
             <Text style={s.avatarText}>{initials}</Text>
