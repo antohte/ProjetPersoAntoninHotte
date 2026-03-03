@@ -1,34 +1,33 @@
-﻿import { useEffect, useState } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  Animated,
-  Image,
-} from "react-native";
+﻿import { Ionicons } from "@expo/vector-icons";
+import { format } from "date-fns";
+import { fr } from "date-fns/locale";
 import { useRouter } from "expo-router";
 import { onAuthStateChanged } from "firebase/auth";
 import {
-  doc,
-  getDoc,
-  collection,
-  query,
-  where,
-  orderBy,
-  limit,
-  onSnapshot,
-  Timestamp,
+    collection,
+    doc,
+    getDoc,
+    limit,
+    onSnapshot,
+    orderBy,
+    query,
+    Timestamp,
+    where,
 } from "firebase/firestore";
-import { auth, db } from "../../lib/firebase";
-import { colors } from "../../constants/color";
-import { format } from "date-fns";
-import { fr } from "date-fns/locale";
-import { Ionicons } from "@expo/vector-icons";
+import { useEffect, useState } from "react";
+import {
+    Image,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View
+} from "react-native";
 import { AnimatedCard } from "../../components/ui/animated-card";
 import { SkeletonProfileCard } from "../../components/ui/skeleton";
-import { Button } from "../../components/ui/button";
+import { colors } from "../../constants/color";
+import { useAdmin } from "../../hooks/use-admin";
+import { auth, db } from "../../lib/firebase";
 
 type UserProfile = {
   email: string;
@@ -55,6 +54,7 @@ function formatDateFR(ts: Timestamp) {
 
 export default function ProfileScreen() {
   const router = useRouter();
+  const { isAdmin } = useAdmin();
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [recentActivities, setRecentActivities] = useState<Activity[]>([]);
@@ -209,7 +209,7 @@ export default function ProfileScreen() {
 
               <View style={s.row}>
                 <Ionicons name="heart-outline" size={18} color={colors.muted} />
-                <Text style={s.label}>Centres d'intérêt :</Text>
+                <Text style={s.label}>Centres d&apos;int&eacute;r&ecirc;t :</Text>
                 <Text style={s.value}>
                   {userProfile?.interests && userProfile.interests.length > 0
                     ? userProfile.interests.join(" · ")
@@ -236,10 +236,10 @@ export default function ProfileScreen() {
               {recentActivities.length === 0 ? (
                 <View style={{ marginTop: 8 }}>
                   <Text style={s.emptyLine}>
-                    Tu n'as pas encore créé d'activité.
+                    Tu n&apos;as pas encore cr&eacute;&eacute; d&apos;activit&eacute;.
                   </Text>
                   <Text style={s.emptyLine}>
-                    Crée ta première sortie depuis l'onglet Activités.
+                    Cr&eacute;&eacute; ta premi&egrave;re sortie depuis l&apos;onglet Activit&eacute;s.
                   </Text>
                 </View>
               ) : (
@@ -266,6 +266,23 @@ export default function ProfileScreen() {
               )}
             </View>
           </AnimatedCard>
+
+          {/* bouton admin */}
+          {isAdmin && (
+            <AnimatedCard delay={150}>
+              <TouchableOpacity
+                style={s.adminBtn}
+                onPress={() => router.push("./admin-panel")}
+                activeOpacity={0.9}
+              >
+                <View style={s.adminBtnContent}>
+                  <Ionicons name="shield-checkmark" size={22} color={colors.primary} />
+                  <Text style={s.adminBtnText}>Accéder au panel de modération</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={colors.muted} />
+              </TouchableOpacity>
+            </AnimatedCard>
+          )}
         </>
       )}
     </ScrollView>
@@ -416,5 +433,27 @@ const s = StyleSheet.create({
     width: 1,
     height: 40,
     backgroundColor: "#0f172a",
+  },
+  adminBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#0f172a",
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    marginBottom: 16,
+  },
+  adminBtnContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    flex: 1,
+  },
+  adminBtnText: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: "600",
   },
 });

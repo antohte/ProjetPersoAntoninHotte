@@ -1,10 +1,10 @@
-import { useState } from "react";
-import { View, Text, TextInput, TouchableOpacity, StyleSheet } from "react-native";
+import { Link, useRouter } from "expo-router";
 import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
-import { auth, db } from "../lib/firebase";
-import { doc, setDoc, serverTimestamp } from "firebase/firestore";
-import { useRouter, Link } from "expo-router";
+import { doc, serverTimestamp, setDoc } from "firebase/firestore";
+import { useState } from "react";
+import { StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { colors } from "../constants/color";
+import { auth, db } from "../lib/firebase";
 
 export default function Register() {
   const [email, setEmail] = useState("");
@@ -33,6 +33,7 @@ export default function Register() {
       year: "",
       interests: [],
       bio: "",
+      role: "user",
       updatedAt: serverTimestamp(),
     });
 

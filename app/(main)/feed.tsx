@@ -1,45 +1,43 @@
 // app main feed
-import React, { useEffect, useState, useMemo } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  RefreshControl,
-  TouchableOpacity,
-  TextInput,
-} from "react-native";
-import {
-  collection,
-  query,
-  orderBy,
-  onSnapshot,
-  Timestamp,
-  doc,
-  updateDoc,
-  arrayUnion,
-  arrayRemove,
-  addDoc,
-  deleteDoc,
-  getDoc,
-  getDocs,
-  limit,
-  startAfter,
-  DocumentSnapshot,
-  QueryDocumentSnapshot,
-  where,
-} from "firebase/firestore";
-import { db, auth } from "../../lib/firebase";
-import { colors } from "../../constants/color";
+import { Ionicons } from "@expo/vector-icons";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { router } from "expo-router";
-import { AnimatedCard } from "../../components/ui/animated-card";
-import { SkeletonActivityCard } from "../../components/ui/skeleton";
-import { Badge } from "../../components/ui/badge";
-import { Ionicons } from "@expo/vector-icons";
+import {
+  addDoc,
+  arrayRemove,
+  arrayUnion,
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+  QueryDocumentSnapshot,
+  startAfter,
+  Timestamp,
+  updateDoc,
+  where
+} from "firebase/firestore";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  Modal,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import { UserAvatar } from "../../components/UserAvatar";
+import { AnimatedCard } from "../../components/ui/animated-card";
 import { EmptyState } from "../../components/ui/empty-state";
+import { SkeletonActivityCard } from "../../components/ui/skeleton";
+import { colors } from "../../constants/color";
+import { auth, db } from "../../lib/firebase";
 
 type Activity = {
   id: string;
@@ -83,6 +81,7 @@ type ActivityCardProps = {
   onSendComment: () => void;
   onCardPress: () => void;
   onDeleteComment: (commentId: string) => void;
+  onReport: (activityId: string, reason: string) => void;
 };
 
 const ActivityCard: React.FC<ActivityCardProps> = ({
@@ -95,7 +94,10 @@ const ActivityCard: React.FC<ActivityCardProps> = ({
   onSendComment,
   onCardPress,
   onDeleteComment,
+  onReport,
 }) => {
+  const [showReportModal, setShowReportModal] = useState(false);
+  
   const jsDate = activity.date.toDate();
   const isPast = jsDate.getTime() < Date.now();
 
@@ -182,6 +184,13 @@ const ActivityCard: React.FC<ActivityCardProps> = ({
         <View style={s.commentLabelWrapper}>
           <Text style={s.commentLabel}>Commenter</Text>
         </View>
+
+        <TouchableOpacity 
+          style={s.reportBtn}
+          onPress={() => setShowReportModal(true)}
+        >
+          <Ionicons name="flag-outline" size={18} color={colors.muted} />
+        </TouchableOpacity>
       </View>
 
       {/*commentaires */}
@@ -238,6 +247,41 @@ const ActivityCard: React.FC<ActivityCardProps> = ({
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* modal signalement */}
+      <Modal
+        visible={showReportModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowReportModal(false)}
+      >
+        <View style={s.modalOverlay}>
+          <View style={s.modalContent}>
+            <Text style={s.modalTitle}>Signaler cette activité</Text>
+            <Text style={s.modalSubtitle}>S&eacute;lectionner une raison</Text>
+
+            {["Contenu inapproprié", "Spam", "Arnaque", "Autre"].map((reason) => (
+              <TouchableOpacity
+                key={reason}
+                style={s.modalOption}
+                onPress={() => {
+                  onReport(activity.id, reason);
+                  setShowReportModal(false);
+                }}
+              >
+                <Text style={s.modalOptionText}>{reason}</Text>
+              </TouchableOpacity>
+            ))}
+
+            <TouchableOpacity
+              style={s.modalCancelBtn}
+              onPress={() => setShowReportModal(false)}
+            >
+              <Text style={s.modalCancelText}>Annuler</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -485,6 +529,25 @@ export default function FeedScreen() {
       console.log("Erreur suppression commentaire :", e);
     }
   };
+
+  // signalement activite
+  const handleReport = async (activityId: string, reason: string) => {
+    if (!user) return;
+
+    try {
+      await addDoc(collection(db, "reports"), {
+        activityId,
+        reason,
+        reportedBy: user.uid,
+        reportedAt: Timestamp.now(),
+      });
+      alert("Merci d'avoir signalé ce contenu");
+    } catch (e) {
+      console.log("Erreur signalement :", e);
+      alert("Erreur lors du signalement");
+    }
+  };
+
   // separation a venir terminees
   const { upcomingActivities, pastActivities } = useMemo(() => {
     const now = Date.now();
@@ -613,6 +676,7 @@ export default function FeedScreen() {
               onSendComment={() => handleSendComment(act.id)}
               onCardPress={() => router.push(`/(main)/activity-details?id=${act.id}` as any)}
               onDeleteComment={(commentId) => handleDeleteComment(act.id, commentId)}
+              onReport={handleReport}
             />
             </AnimatedCard>
           );
@@ -651,6 +715,7 @@ export default function FeedScreen() {
               onSendComment={() => handleSendComment(act.id)}
               onCardPress={() => router.push(`/(main)/activity-details?id=${act.id}` as any)}
               onDeleteComment={(commentId) => handleDeleteComment(act.id, commentId)}
+              onReport={handleReport}
             />
             </AnimatedCard>
           );
@@ -669,7 +734,7 @@ export default function FeedScreen() {
           {loadingMore ? (
             <Text style={s.loadMoreText}>Chargement...</Text>
           ) : (
-            <Text style={s.loadMoreText}>Charger plus d'activités</Text>
+            <Text style={s.loadMoreText}>Charger plus d&apos;activit&eacute;s</Text>
           )}
         </TouchableOpacity>
       )}
@@ -804,6 +869,10 @@ const s = StyleSheet.create({
     alignItems: "center",
     gap: 12,
     marginBottom: 16,
+  },
+  reportBtn: {
+    padding: 8,
+    marginLeft: "auto",
   },
   participateBtn: {
     flex: 1,
@@ -991,5 +1060,52 @@ const s = StyleSheet.create({
   },
   categoryChipTextActive: {
     color: "#0b111f",
+  },
+  
+  // modal signalement
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.7)",
+    justifyContent: "flex-end",
+  },
+  modalContent: {
+    backgroundColor: "#0f172a",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    borderTopWidth: 1,
+    borderTopColor: "#1e293b",
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: colors.text,
+    marginBottom: 4,
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    color: colors.muted,
+    marginBottom: 16,
+  },
+  modalOption: {
+    backgroundColor: "#1e293b",
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 10,
+  },
+  modalOptionText: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  modalCancelBtn: {
+    paddingVertical: 12,
+    marginTop: 8,
+  },
+  modalCancelText: {
+    color: colors.muted,
+    fontSize: 14,
+    fontWeight: "500",
+    textAlign: "center",
   },
 });
