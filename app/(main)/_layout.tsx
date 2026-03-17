@@ -1,18 +1,25 @@
-import { Drawer } from "expo-router/drawer";
-import { colors } from "../../constants/color";
-import CustomDrawer from "../../components/CustomDrawer";
 import { Ionicons } from "@expo/vector-icons";
+import { Drawer } from "expo-router/drawer";
+import { onAuthStateChanged } from "firebase/auth";
 import { useEffect } from "react";
+import CustomDrawer from "../../components/CustomDrawer";
+import { colors } from "../../constants/color";
+import { useAdmin } from "../../hooks/use-admin";
 import { auth } from "../../lib/firebase";
 import { registerForPushNotificationsAsync } from "../../lib/notifications";
 
 export default function MainLayout() {
+  const { isAdmin } = useAdmin();
+
   // enregistrer le token push au montage
   useEffect(() => {
-    const user = auth.currentUser;
-    if (user) {
-      registerForPushNotificationsAsync(user.uid);
-    }
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        registerForPushNotificationsAsync(user.uid);
+      }
+    });
+
+    return unsub;
   }, []);
 
   return (
@@ -78,6 +85,19 @@ export default function MainLayout() {
             title: "Détails de l'activité",
         }}
       />
+
+      {/* bouton admin visible seulement pour les admins */}
+      {isAdmin && (
+        <Drawer.Screen
+          name="admin-panel"
+          options={{
+            title: "Panel admin",
+            drawerIcon: ({ color, size }) => (
+              <Ionicons name="shield-checkmark" size={size} color={color} />
+            ),
+          }}
+        />
+      )}
 
     </Drawer>
   );

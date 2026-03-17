@@ -1,7 +1,8 @@
-import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
 import * as Device from 'expo-device';
+import * as Notifications from 'expo-notifications';
+import { deleteDoc, doc, setDoc } from 'firebase/firestore';
 import { Platform } from 'react-native';
-import { doc, setDoc, deleteDoc, collection } from 'firebase/firestore';
 import { db } from './firebase';
 
 // configuration du comportement des notifications
@@ -41,8 +42,17 @@ export async function registerForPushNotificationsAsync(userId: string): Promise
 
   // recuperer le token
   try {
-    const projectId = 'your-project-id'; // sera remplace par la config Expo
-    token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+    const projectId =
+      Constants?.expoConfig?.extra?.eas?.projectId ??
+      Constants?.easConfig?.projectId;
+
+    if (projectId) {
+      token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+    } else {
+      console.log('project id introuvable');
+      token = (await Notifications.getExpoPushTokenAsync()).data;
+    }
+
     console.log('Token push:', token);
 
     // sauvegarder le token dans Firestore

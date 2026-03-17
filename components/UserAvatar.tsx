@@ -1,11 +1,11 @@
-import React, { useEffect, useState } from "react";
-import { View, Image, Text, StyleSheet } from "react-native";
 import { doc, getDoc } from "firebase/firestore";
-import { db } from "../lib/firebase";
+import React, { useEffect, useState } from "react";
+import { Image, StyleSheet, Text, View } from "react-native";
 import { colors } from "../constants/color";
+import { db } from "../lib/firebase";
 
 type UserAvatarProps = {
-  userId: string;
+  userId?: string;
   size?: number;
   userName?: string;
 };
@@ -15,15 +15,30 @@ export function UserAvatar({ userId, size = 40, userName }: UserAvatarProps) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const safeUserId = typeof userId === "string" ? userId.trim() : "";
+    if (!safeUserId) {
+      setPhotoURL(null);
+      setLoading(false);
+      return;
+    }
+
     const loadUserPhoto = async () => {
       try {
-        const userDoc = await getDoc(doc(db, "users", userId));
+        const userDoc = await getDoc(doc(db, "users", safeUserId));
         if (userDoc.exists()) {
           const userData = userDoc.data();
-          setPhotoURL(userData.photoURL || null);
+          const rawPhotoURL = userData?.photoURL;
+          const safePhotoURL =
+            typeof rawPhotoURL === "string" && rawPhotoURL.trim().length > 0
+              ? rawPhotoURL.trim()
+              : null;
+          setPhotoURL(safePhotoURL);
+        } else {
+          setPhotoURL(null);
         }
       } catch (error) {
         console.error("erreur chargement photo", error);
+        setPhotoURL(null);
       } finally {
         setLoading(false);
       }

@@ -6,25 +6,37 @@ service cloud.firestore {
     function isAdmin(userId) {
       return (get(/databases/$(database)/documents/users/$(userId)).data.role == 'admin');
     }
+
+    // helper pour verifier si user est banni
+    function isBanned(userId) {
+      return (get(/databases/$(database)/documents/users/$(userId)).data.status == 'banned');
+    }
     
     // Règles pour les utilisateurs
     match /users/{userId} {
       allow read: if request.auth != null;
       
-      // write : seul le user lui-meme, et pas de modif du champ role
-      allow write: if request.auth != null && request.auth.uid == userId
-        && !('role' in request.resource.data.diff(resource.data).affectedKeys());
+      // write : user lui-meme (sans modif role) OU admin
+      allow write: if request.auth != null && (
+        (
+          request.auth.uid == userId
+          && !('role' in request.resource.data.diff(resource.data).affectedKeys())
+        )
+        || isAdmin(request.auth.uid)
+      );
       
       // Règles pour les push tokens
       match /pushTokens/{tokenId} {
         allow read: if request.auth != null && request.auth.uid == userId;
-        allow write: if request.auth != null && request.auth.uid == userId;
+        allow write: if request.auth != null && request.auth.uid == userId
+          && !isBanned(request.auth.uid);
       }
       
       // Règles pour les notifications
       match /notifications/{notifId} {
         allow read: if request.auth != null && request.auth.uid == userId;
-        allow write: if request.auth != null && request.auth.uid == userId;
+        allow write: if request.auth != null && request.auth.uid == userId
+          && !isBanned(request.auth.uid);
         allow delete: if request.auth != null && request.auth.uid == userId;
       }
     }
@@ -36,6 +48,7 @@ service cloud.firestore {
       
       // Création : tout utilisateur authentifié
       allow create: if request.auth != null
+        && !isBanned(request.auth.uid)
         && request.resource.data.ownerId == request.auth.uid
         && request.resource.data.title is string
         && request.resource.data.date is timestamp;
@@ -43,9 +56,11 @@ service cloud.firestore {
       // Mise à jour : uniquement le créateur ou pour ajouter/retirer des participants
       allow update: if request.auth != null && (
         // Le créateur peut tout modifier
-        resource.data.ownerId == request.auth.uid
+        (resource.data.ownerId == request.auth.uid && !isBanned(request.auth.uid))
         // Ou n'importe qui peut s'ajouter/retirer des participants
         || (
+          !isBanned(request.auth.uid)
+          &&
           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['participants'])
         )
       );
@@ -63,6 +78,7 @@ service cloud.firestore {
         
         // Création : tout utilisateur authentifié
         allow create: if request.auth != null
+          && !isBanned(request.auth.uid)
           && request.resource.data.userId == request.auth.uid
           && request.resource.data.text is string
           && request.resource.data.createdAt is timestamp;
@@ -85,6 +101,7 @@ service cloud.firestore {
       
       // creation: tout utilisateur authentifie peut signaler
       allow create: if request.auth != null
+        && !isBanned(request.auth.uid)
         && request.resource.data.activityId is string
         && request.resource.data.reason is string
         && request.resource.data.reportedBy == request.auth.uid
@@ -92,7 +109,7 @@ service cloud.firestore {
       
       // pas de modification ni suppression
       allow update: if false;
-      allow delete: if false;
+      allow delete: if request.auth != null && isAdmin(request.auth.uid);
     }
   }
 }
