@@ -4,12 +4,14 @@ service cloud.firestore {
     
     // fonction helper pour verifier si user est admin
     function isAdmin(userId) {
-      return (get(/databases/$(database)/documents/users/$(userId)).data.role == 'admin');
+      let userData = get(/databases/$(database)/documents/users/$(userId)).data;
+      return userData != null && userData.get('role', 'user') == 'admin';
     }
 
     // helper pour verifier si user est banni
     function isBanned(userId) {
-      return (get(/databases/$(database)/documents/users/$(userId)).data.status == 'banned');
+      let userData = get(/databases/$(database)/documents/users/$(userId)).data;
+      return userData != null && userData.get('status', 'active') == 'banned';
     }
     
     // Règles pour les utilisateurs

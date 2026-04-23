@@ -14,10 +14,9 @@ import {
   orderBy,
   query,
   serverTimestamp,
-  Timestamp,
   updateDoc,
 } from "firebase/firestore";
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -32,84 +31,55 @@ import { colors } from "../../constants/color";
 import { useAdmin } from "../../hooks/use-admin";
 import { auth, db } from "../../lib/firebase";
 
-type Report = {
-  id: string;
-  activityId: string;
-  reason: string;
-  reportedBy: string;
-  reportedAt: Timestamp;
-  activityTitle?: string;
-};
-
-type AdminUser = {
-  id: string;
-  displayName?: string;
-  email?: string;
-  role?: string;
-  status?: "active" | "banned";
-  warningsCount?: number;
-};
-
-type ModeratedActivity = {
-  id: string;
-  title?: string;
-  ownerId?: string;
-  date?: Timestamp;
-};
-
-type ModeratedComment = {
-  id: string;
-  activityId: string;
-  text?: string;
-  userName?: string;
-  createdAt?: Timestamp;
-};
-
 export default function AdminPanel() {
   const { isAdmin, loading: adminLoading } = useAdmin();
 
-  // reports
-  const [reports, setReports] = useState<Report[]>([]);
-  const [loadingReports, setLoadingReports] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // liste des signalements
+  const [signalements, setSignalements] = useState<any[]>([]);
+  const [loadingSignalements, setLoadingSignalements] = useState(true);
+  const [erreur, setErreur] = useState("");
 
-  // users
-  const [users, setUsers] = useState<AdminUser[]>([]);
-  const [userSearch, setUserSearch] = useState("");
+  // liste de tous les utilisateurs (pour la recherche)
+  const [utilisateurs, setUtilisateurs] = useState<any[]>([]);
+  const [rechercheUser, setRechercheUser] = useState("");
 
-  // activities
-  const [activities, setActivities] = useState<ModeratedActivity[]>([]);
-  const [activitySearch, setActivitySearch] = useState("");
+  // liste de toutes les activités (pour la modération)
+  const [activites, setActivites] = useState<any[]>([]);
+  const [rechercheActivite, setRechercheActivite] = useState("");
 
-  // comments
-  const [comments, setComments] = useState<ModeratedComment[]>([]);
-  const [commentSearch, setCommentSearch] = useState("");
+  // liste de tous les commentaires (pour la modération)
+  const [commentaires, setCommentaires] = useState<any[]>([]);
+  const [rechercheCommentaire, setRechercheCommentaire] = useState("");
 
-  const [deleting, setDeleting] = useState<string | null>(null);
-  const [processingUserId, setProcessingUserId] = useState<string | null>(null);
+  // id de l'élément en cours de suppression ou traitement
+  const [supprimantId, setSupprimantId] = useState("");
+  const [traitantUserId, setTraitantUserId] = useState("");
 
-  // reduire si pas admin
+  // rediriger si pas admin
   useEffect(() => {
     if (!adminLoading && !isAdmin) {
       router.replace("/(main)/feed");
     }
   }, [isAdmin, adminLoading]);
 
-  // charger les signalements
+  // charger les signalements en temps réel
   useEffect(() => {
     if (!isAdmin) return;
 
-    setLoadingReports(true);
-    setError(null);
+    setLoadingSignalements(true);
+    setErreur("");
+
     const q = query(collection(db, "reports"));
-    const unsub = onSnapshot(
+
+    const stopEcoute = onSnapshot(
       q,
       async (snap) => {
-        const reportsList: Report[] = [];
+        const liste: any[] = [];
 
+        // pour chaque signalement, on va chercher le titre de l'activité signalée
         for (const docSnap of snap.docs) {
           const data = docSnap.data();
-          const report: Report = {
+          const signalement: any = {
             id: docSnap.id,
             activityId: data.activityId,
             reason: data.reason,
@@ -117,44 +87,44 @@ export default function AdminPanel() {
             reportedAt: data.reportedAt,
           };
 
-          // recuperer le titre de lactivite
           try {
             const actDoc = await getDoc(doc(db, "activities", data.activityId));
             if (actDoc.exists()) {
-              report.activityTitle = actDoc.data().title;
+              signalement.activityTitle = actDoc.data().title;
             }
           } catch (e) {
-            console.log("erreur titre activite:", e);
+            console.log("Erreur récupération titre activité :", e);
           }
 
-          reportsList.push(report);
+          liste.push(signalement);
         }
 
-        setReports(reportsList);
-        setLoadingReports(false);
+        setSignalements(liste);
+        setLoadingSignalements(false);
       },
       (err) => {
-        console.log("erreur lecture reports:", err);
-        setError("Accès refusé au panel admin. Vérifie role=admin et les règles Firestore déployées.");
-        setLoadingReports(false);
+        console.log("Erreur lecture signalements :", err);
+        setErreur("Accès refusé au panel admin. Vérifie role=admin et les règles Firestore déployées.");
+        setLoadingSignalements(false);
       }
     );
 
-    return unsub;
+    return stopEcoute;
   }, [isAdmin]);
 
-  // charger users pour recherche/modération
+  // charger les utilisateurs en temps réel
   useEffect(() => {
     if (!isAdmin) return;
 
     const q = query(collection(db, "users"), limit(300));
-    const unsub = onSnapshot(
+
+    const stopEcoute = onSnapshot(
       q,
       (snap) => {
-        const list: AdminUser[] = snap.docs.map((userDoc) => {
-          const data = userDoc.data() as any;
+        const liste = snap.docs.map((d) => {
+          const data = d.data() as any;
           return {
-            id: userDoc.id,
+            id: d.id,
             displayName: data.displayName,
             email: data.email,
             role: data.role,
@@ -162,278 +132,285 @@ export default function AdminPanel() {
             warningsCount: data.warningsCount || 0,
           };
         });
-        setUsers(list);
+        setUtilisateurs(liste);
       },
-      (err) => {
-        console.log("erreur lecture users:", err);
-      }
+      (err) => console.log("Erreur lecture utilisateurs :", err)
     );
 
-    return unsub;
+    return stopEcoute;
   }, [isAdmin]);
 
-  // charger activités pour suppression admin
+  // charger les activités en temps réel
   useEffect(() => {
     if (!isAdmin) return;
 
     const q = query(collection(db, "activities"), orderBy("date", "desc"), limit(100));
-    const unsub = onSnapshot(
+
+    const stopEcoute = onSnapshot(
       q,
       (snap) => {
-        const list: ModeratedActivity[] = snap.docs.map((activityDoc) => {
-          const data = activityDoc.data() as any;
+        const liste = snap.docs.map((d) => {
+          const data = d.data() as any;
           return {
-            id: activityDoc.id,
+            id: d.id,
             title: data.title,
             ownerId: data.ownerId,
             date: data.date,
           };
         });
-        setActivities(list);
+        setActivites(liste);
       },
-      (err) => {
-        console.log("erreur lecture activities:", err);
-      }
+      (err) => console.log("Erreur lecture activités :", err)
     );
 
-    return unsub;
+    return stopEcoute;
   }, [isAdmin]);
 
-  // charger commentaires pour suppression admin
+  // charger les commentaires en temps réel
   useEffect(() => {
     if (!isAdmin) return;
 
     const q = query(collectionGroup(db, "comments"), orderBy("createdAt", "desc"), limit(120));
-    const unsub = onSnapshot(
+
+    const stopEcoute = onSnapshot(
       q,
       (snap) => {
-        const list: ModeratedComment[] = snap.docs.map((commentDoc) => {
-          const data = commentDoc.data() as any;
-          const activityId = commentDoc.ref.parent.parent?.id || "";
-          return {
-            id: commentDoc.id,
-            activityId,
-            text: data.text,
-            userName: data.userName,
-            createdAt: data.createdAt,
-          };
-        });
-        setComments(list.filter((c) => !!c.activityId));
+        const liste = snap.docs
+          .map((d) => {
+            const data = d.data() as any;
+            const activityId = d.ref.parent.parent?.id || "";
+            return {
+              id: d.id,
+              activityId,
+              text: data.text,
+              userName: data.userName,
+              createdAt: data.createdAt,
+            };
+          })
+          .filter((c) => !!c.activityId);
+        setCommentaires(liste);
       },
-      (err) => {
-        console.log("erreur lecture comments:", err);
-      }
+      (err) => console.log("Erreur lecture commentaires :", err)
     );
 
-    return unsub;
+    return stopEcoute;
   }, [isAdmin]);
 
-  const filteredUsers = useMemo(() => {
-    const term = userSearch.trim().toLowerCase();
-    if (!term) return [];
-    return users.filter((user) => {
-      const name = (user.displayName || "").toLowerCase();
-      const email = (user.email || "").toLowerCase();
-      return name.includes(term) || email.includes(term);
-    });
-  }, [users, userSearch]);
-
-  const filteredActivities = useMemo(() => {
-    const term = activitySearch.trim().toLowerCase();
-    if (!term) return [];
-    return activities.filter((activity) =>
-      (activity.title || "").toLowerCase().includes(term)
+  // filtrer les utilisateurs selon la recherche
+  const utilisateursFiltres = utilisateurs.filter((u) => {
+    const terme = rechercheUser.trim().toLowerCase();
+    if (!terme) return false;
+    return (
+      (u.displayName || "").toLowerCase().includes(terme) ||
+      (u.email || "").toLowerCase().includes(terme)
     );
-  }, [activities, activitySearch]);
+  });
 
-  const filteredComments = useMemo(() => {
-    const term = commentSearch.trim().toLowerCase();
-    if (!term) return [];
-    return comments.filter((comment) => {
-      const txt = (comment.text || "").toLowerCase();
-      const user = (comment.userName || "").toLowerCase();
-      const activityId = (comment.activityId || "").toLowerCase();
-      return txt.includes(term) || user.includes(term) || activityId.includes(term);
-    });
-  }, [comments, commentSearch]);
+  // filtrer les activités selon la recherche
+  const activitesFiltrees = activites.filter((a) => {
+    const terme = rechercheActivite.trim().toLowerCase();
+    if (!terme) return false;
+    return (a.title || "").toLowerCase().includes(terme);
+  });
 
-  const handleWarnUser = async (targetUser: AdminUser) => {
-    setProcessingUserId(targetUser.id);
+  // filtrer les commentaires selon la recherche
+  const commentairesFiltres = commentaires.filter((c) => {
+    const terme = rechercheCommentaire.trim().toLowerCase();
+    if (!terme) return false;
+    return (
+      (c.text || "").toLowerCase().includes(terme) ||
+      (c.userName || "").toLowerCase().includes(terme) ||
+      (c.activityId || "").toLowerCase().includes(terme)
+    );
+  });
+
+  // envoyer un avertissement à un utilisateur
+  const avertirUtilisateur = async (utilisateur: any) => {
+    setTraitantUserId(utilisateur.id);
     try {
-      await updateDoc(doc(db, "users", targetUser.id), {
+      await updateDoc(doc(db, "users", utilisateur.id), {
         warningsCount: increment(1),
         lastWarningReason: "Avertissement admin",
         lastWarningAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
-      Alert.alert("Avertissement envoyé", `Utilisateur ${targetUser.displayName || targetUser.email || targetUser.id} averti.`);
+      Alert.alert(
+        "Avertissement envoyé",
+        `Utilisateur ${utilisateur.displayName || utilisateur.email || utilisateur.id} averti.`
+      );
     } catch (err) {
-      console.log("erreur avertissement user:", err);
+      console.log("Erreur avertissement utilisateur :", err);
       Alert.alert("Erreur", "Impossible d'envoyer un avertissement.");
-    } finally {
-      setProcessingUserId(null);
     }
+    setTraitantUserId("");
   };
 
-  const handleToggleBanUser = async (targetUser: AdminUser) => {
-    const currentStatus = targetUser.status || "active";
-    const nextStatus = currentStatus === "banned" ? "active" : "banned";
+  // bannir ou débannir un utilisateur
+  const toggleBanUtilisateur = async (utilisateur: any) => {
+    const statutActuel = utilisateur.status || "active";
+    const nouveauStatut = statutActuel === "banned" ? "active" : "banned";
 
-    setProcessingUserId(targetUser.id);
+    setTraitantUserId(utilisateur.id);
     try {
-      await updateDoc(doc(db, "users", targetUser.id), {
-        status: nextStatus,
-        bannedAt: nextStatus === "banned" ? serverTimestamp() : null,
+      await updateDoc(doc(db, "users", utilisateur.id), {
+        status: nouveauStatut,
+        bannedAt: nouveauStatut === "banned" ? serverTimestamp() : null,
         updatedAt: serverTimestamp(),
       });
       Alert.alert(
-        nextStatus === "banned" ? "Utilisateur banni" : "Utilisateur débanni",
-        `${targetUser.displayName || targetUser.email || targetUser.id}`
+        nouveauStatut === "banned" ? "Utilisateur banni" : "Utilisateur débanni",
+        utilisateur.displayName || utilisateur.email || utilisateur.id
       );
     } catch (err) {
-      console.log("erreur ban user:", err);
+      console.log("Erreur ban utilisateur :", err);
       Alert.alert("Erreur", "Impossible de modifier le statut de l'utilisateur.");
-    } finally {
-      setProcessingUserId(null);
     }
+    setTraitantUserId("");
   };
 
-  // supprimer lactivite et le signalement
-  const handleDeleteActivity = async (report: Report) => {
+  // supprimer l'activité signalée + le signalement
+  const supprimerActiviteSignalee = async (signalement: any) => {
     if (!auth.currentUser) return;
 
-    setDeleting(report.id);
+    setSupprimantId(signalement.id);
     try {
-      // supprimer lactivite
-      await deleteDoc(doc(db, "activities", report.activityId));
-
-      // supprimer le signalement
-      await deleteDoc(doc(db, "reports", report.id));
-
-      alert("Activité et rapport supprimés");
+      await deleteDoc(doc(db, "activities", signalement.activityId));
+      await deleteDoc(doc(db, "reports", signalement.id));
+      alert("Activité et signalement supprimés");
     } catch (e) {
-      console.log("erreur suppression:", e);
+      console.log("Erreur suppression :", e);
       alert("Erreur lors de la suppression");
-    } finally {
-      setDeleting(null);
     }
+    setSupprimantId("");
   };
 
-  const handleDeleteActivityById = async (activityId: string) => {
-    setDeleting(activityId);
+  // ignorer un signalement (le supprimer sans supprimer l'activité)
+  const ignorerSignalement = async (signalementId: string) => {
+    setSupprimantId(signalementId);
+    try {
+      await deleteDoc(doc(db, "reports", signalementId));
+    } catch (e) {
+      console.log("Erreur suppression signalement :", e);
+    }
+    setSupprimantId("");
+  };
+
+  // supprimer une activité directement (depuis la section activités)
+  const supprimerActivite = async (activityId: string) => {
+    setSupprimantId(activityId);
     try {
       await deleteDoc(doc(db, "activities", activityId));
       Alert.alert("Activité supprimée", "L'activité a été supprimée.");
     } catch (e) {
-      console.log("erreur suppression activité admin:", e);
+      console.log("Erreur suppression activité :", e);
       Alert.alert("Erreur", "Impossible de supprimer l'activité.");
-    } finally {
-      setDeleting(null);
     }
+    setSupprimantId("");
   };
 
-  const handleDeleteComment = async (activityId: string, commentId: string) => {
-    setDeleting(commentId);
+  // supprimer un commentaire
+  const supprimerCommentaire = async (activityId: string, commentId: string) => {
+    setSupprimantId(commentId);
     try {
       await deleteDoc(doc(db, "activities", activityId, "comments", commentId));
       Alert.alert("Commentaire supprimé", "Le commentaire a été supprimé.");
     } catch (e) {
-      console.log("erreur suppression commentaire admin:", e);
+      console.log("Erreur suppression commentaire :", e);
       Alert.alert("Erreur", "Impossible de supprimer le commentaire.");
-    } finally {
-      setDeleting(null);
     }
+    setSupprimantId("");
   };
 
-  // ignorer le signalement
-  const handleIgnore = async (reportId: string) => {
-    setDeleting(reportId);
-    try {
-      await deleteDoc(doc(db, "reports", reportId));
-    } catch (e) {
-      console.log("erreur suppression rapport:", e);
-    } finally {
-      setDeleting(null);
-    }
-  };
-
+  // --- pendant le chargement admin ---
   if (adminLoading) {
     return (
-      <View style={s.container}>
+      <View style={styles.ecran}>
         <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
   }
 
   return (
-    <ScrollView style={s.container}>
-      <View style={s.content}>
-        <View style={s.header}>
+    <ScrollView style={styles.ecran}>
+      <View style={styles.contenu}>
+
+        {/* titre de la page */}
+        <View style={styles.entete}>
           <Ionicons name="shield-checkmark" size={28} color={colors.primary} />
-          <Text style={s.title}>Modération</Text>
+          <Text style={styles.titrePage}>Modération</Text>
         </View>
 
-        {loadingReports ? (
+        {/* section signalements */}
+        {loadingSignalements ? (
           <ActivityIndicator size="large" color={colors.primary} />
-        ) : error ? (
-          <View style={s.emptyState}>
+        ) : erreur ? (
+          <View style={styles.blocVide}>
             <Ionicons name="alert-circle-outline" size={48} color="#f97316" />
-            <Text style={s.emptyTitle}>Accès impossible</Text>
-            <Text style={s.emptyText}>{error}</Text>
+            <Text style={styles.titreVide}>Accès impossible</Text>
+            <Text style={styles.texteVide}>{erreur}</Text>
           </View>
-        ) : reports.length === 0 ? (
-          <View style={s.emptyState}>
+        ) : signalements.length === 0 ? (
+          <View style={styles.blocVide}>
             <Ionicons name="checkmark-circle-outline" size={48} color={colors.muted} />
-            <Text style={s.emptyTitle}>Aucun signalement</Text>
-            <Text style={s.emptyText}>Tout est en ordre</Text>
+            <Text style={styles.titreVide}>Aucun signalement</Text>
+            <Text style={styles.texteVide}>Tout est en ordre</Text>
           </View>
         ) : (
           <View>
-            <Text style={s.countText}>{reports.length} signalement(s)</Text>
-            {reports.map((report) => (
-              <View key={report.id} style={s.reportCard}>
-                <View style={s.reportHeader}>
+            <Text style={styles.nbSignalements}>{signalements.length} signalement(s)</Text>
+
+            {signalements.map((signalement) => (
+              <View key={signalement.id} style={styles.carteSignalement}>
+
+                {/* titre et raison */}
+                <View style={styles.enteteSignalement}>
                   <View style={{ flex: 1 }}>
-                    <Text style={s.reportTitle}>{report.activityTitle || "Activité supprimée"}</Text>
-                    <Text style={s.reportReason}>Raison : {report.reason}</Text>
+                    <Text style={styles.titreSignalement}>
+                      {signalement.activityTitle || "Activité supprimée"}
+                    </Text>
+                    <Text style={styles.raisonSignalement}>
+                      Raison : {signalement.reason}
+                    </Text>
                   </View>
-                  <View style={s.reportBadge}>
+                  <View style={styles.iconeSignalement}>
                     <Ionicons name="flag-outline" size={16} color="#f97316" />
                   </View>
                 </View>
 
-                <Text style={s.reportMeta}>
-                  Signalée par {(report.reportedBy || "inconnu").substring(0, 8)}... le{" "}
-                  {format(report.reportedAt.toDate(), "dd MMM à HH:mm", { locale: fr })}
+                {/* méta : qui a signalé et quand */}
+                <Text style={styles.metaSignalement}>
+                  Signalée par {(signalement.reportedBy || "inconnu").substring(0, 8)}... le{" "}
+                  {format(signalement.reportedAt.toDate(), "dd MMM à HH:mm", { locale: fr })}
                 </Text>
 
-                <View style={s.actionsRow}>
+                {/* actions : supprimer ou ignorer */}
+                <View style={styles.ligneActions}>
                   <TouchableOpacity
-                    style={[s.btn, s.deleteBtn]}
-                    onPress={() => handleDeleteActivity(report)}
-                    disabled={deleting === report.id}
+                    style={[styles.bouton, styles.boutonSupprimer]}
+                    onPress={() => supprimerActiviteSignalee(signalement)}
+                    disabled={supprimantId === signalement.id}
                   >
-                    {deleting === report.id ? (
+                    {supprimantId === signalement.id ? (
                       <ActivityIndicator size="small" color="#fff" />
                     ) : (
                       <>
                         <Ionicons name="trash-outline" size={16} color="#fff" />
-                        <Text style={s.deleteBtnText}>Supprimer</Text>
+                        <Text style={styles.boutonSupprimerTexte}>Supprimer</Text>
                       </>
                     )}
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    style={[s.btn, s.ignoreBtn]}
-                    onPress={() => handleIgnore(report.id)}
-                    disabled={deleting === report.id}
+                    style={[styles.bouton, styles.boutonIgnorer]}
+                    onPress={() => ignorerSignalement(signalement.id)}
+                    disabled={supprimantId === signalement.id}
                   >
-                    {deleting === report.id ? (
+                    {supprimantId === signalement.id ? (
                       <ActivityIndicator size="small" color={colors.text} />
                     ) : (
                       <>
                         <Ionicons name="close-outline" size={16} color={colors.text} />
-                        <Text style={s.ignoreBtnText}>Ignorer</Text>
+                        <Text style={styles.boutonIgnorerTexte}>Ignorer</Text>
                       </>
                     )}
                   </TouchableOpacity>
@@ -443,46 +420,52 @@ export default function AdminPanel() {
           </View>
         )}
 
-        <View style={s.sectionCard}>
-          <View style={s.sectionHeader}>
+        {/* section utilisateurs */}
+        <View style={styles.sectionCarte}>
+          <View style={styles.sectionEntete}>
             <Ionicons name="people-outline" size={20} color={colors.primary} />
-            <Text style={s.sectionTitle}>Utilisateurs</Text>
+            <Text style={styles.sectionTitre}>Utilisateurs</Text>
           </View>
+
           <TextInput
-            style={s.searchInput}
+            style={styles.champRecherche}
             placeholder="Chercher par nom ou email"
             placeholderTextColor={colors.muted}
-            value={userSearch}
-            onChangeText={setUserSearch}
+            value={rechercheUser}
+            onChangeText={setRechercheUser}
           />
 
-          {filteredUsers.slice(0, 60).map((user) => {
-            const isBanned = (user.status || "active") === "banned";
-            const isCurrentUser = auth.currentUser?.uid === user.id;
-            const statusLabel = isBanned ? "banni" : "actif";
+          {utilisateursFiltres.slice(0, 60).map((utilisateur) => {
+            const estBanni = utilisateur.status === "banned";
+            const estMoi = auth.currentUser?.uid === utilisateur.id;
+
             return (
-              <View key={user.id} style={s.userCard}>
+              <View key={utilisateur.id} style={styles.ligneItem}>
                 <View style={{ flex: 1 }}>
-                  <Text style={s.userName}>{user.displayName || "Sans nom"}</Text>
-                  <Text style={s.userMeta}>{user.email || user.id}</Text>
-                  <Text style={s.userMeta}>
-                    rôle: {user.role || "user"} · statut: {statusLabel} · avertissements: {user.warningsCount || 0}
+                  <Text style={styles.nomItem}>{utilisateur.displayName || "Sans nom"}</Text>
+                  <Text style={styles.metaItem}>{utilisateur.email || utilisateur.id}</Text>
+                  <Text style={styles.metaItem}>
+                    rôle: {utilisateur.role || "user"} · statut: {estBanni ? "banni" : "actif"} · avertissements: {utilisateur.warningsCount || 0}
                   </Text>
                 </View>
-                <View style={s.smallActionsRow}>
+
+                <View style={{ gap: 6 }}>
                   <TouchableOpacity
-                    style={[s.smallBtn, s.warnBtn]}
-                    onPress={() => handleWarnUser(user)}
-                    disabled={processingUserId === user.id || isCurrentUser}
+                    style={[styles.petitBouton, styles.petitBoutonAvertir]}
+                    onPress={() => avertirUtilisateur(utilisateur)}
+                    disabled={traitantUserId === utilisateur.id || estMoi}
                   >
-                    <Text style={s.smallBtnText}>Avertir</Text>
+                    <Text style={styles.petitBoutonTexte}>Avertir</Text>
                   </TouchableOpacity>
+
                   <TouchableOpacity
-                    style={[s.smallBtn, isBanned ? s.unbanBtn : s.banBtn]}
-                    onPress={() => handleToggleBanUser(user)}
-                    disabled={processingUserId === user.id || isCurrentUser}
+                    style={[styles.petitBouton, estBanni ? styles.petitBoutonDebannir : styles.petitBoutonBannir]}
+                    onPress={() => toggleBanUtilisateur(utilisateur)}
+                    disabled={traitantUserId === utilisateur.id || estMoi}
                   >
-                    <Text style={s.smallBtnText}>{isBanned ? "Débannir" : "Bannir"}</Text>
+                    <Text style={styles.petitBoutonTexte}>
+                      {estBanni ? "Débannir" : "Bannir"}
+                    </Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -490,119 +473,131 @@ export default function AdminPanel() {
           })}
         </View>
 
-        <View style={s.sectionCard}>
-          <View style={s.sectionHeader}>
+        {/* section activités */}
+        <View style={styles.sectionCarte}>
+          <View style={styles.sectionEntete}>
             <Ionicons name="document-text-outline" size={20} color={colors.primary} />
-            <Text style={s.sectionTitle}>Activités</Text>
+            <Text style={styles.sectionTitre}>Activités</Text>
           </View>
+
           <TextInput
-            style={s.searchInput}
+            style={styles.champRecherche}
             placeholder="Chercher une activité par titre"
             placeholderTextColor={colors.muted}
-            value={activitySearch}
-            onChangeText={setActivitySearch}
+            value={rechercheActivite}
+            onChangeText={setRechercheActivite}
           />
-          {filteredActivities.slice(0, 50).map((activity) => (
-            <View key={activity.id} style={s.userCard}>
+
+          {activitesFiltrees.slice(0, 50).map((activite) => (
+            <View key={activite.id} style={styles.ligneItem}>
               <View style={{ flex: 1 }}>
-                <Text style={s.userName}>{activity.title || "Activité sans titre"}</Text>
-                <Text style={s.userMeta}>propriétaire: {activity.ownerId || "inconnu"}</Text>
-                <Text style={s.userMeta}>
-                  {activity.date?.toDate
-                    ? format(activity.date.toDate(), "dd MMM à HH:mm", { locale: fr })
+                <Text style={styles.nomItem}>{activite.title || "Activité sans titre"}</Text>
+                <Text style={styles.metaItem}>propriétaire: {activite.ownerId || "inconnu"}</Text>
+                <Text style={styles.metaItem}>
+                  {activite.date?.toDate
+                    ? format(activite.date.toDate(), "dd MMM à HH:mm", { locale: fr })
                     : "date inconnue"}
                 </Text>
               </View>
               <TouchableOpacity
-                style={[s.smallBtn, s.deleteBtn]}
-                onPress={() => handleDeleteActivityById(activity.id)}
-                disabled={deleting === activity.id}
+                style={[styles.petitBouton, styles.boutonSupprimer]}
+                onPress={() => supprimerActivite(activite.id)}
+                disabled={supprimantId === activite.id}
               >
-                <Text style={s.smallBtnText}>Supprimer</Text>
+                <Text style={styles.petitBoutonTexte}>Supprimer</Text>
               </TouchableOpacity>
             </View>
           ))}
         </View>
 
-        <View style={s.sectionCard}>
-          <View style={s.sectionHeader}>
+        {/* section commentaires */}
+        <View style={styles.sectionCarte}>
+          <View style={styles.sectionEntete}>
             <Ionicons name="chatbubble-ellipses-outline" size={20} color={colors.primary} />
-            <Text style={s.sectionTitle}>Commentaires</Text>
+            <Text style={styles.sectionTitre}>Commentaires</Text>
           </View>
 
           <TextInput
-            style={s.searchInput}
+            style={styles.champRecherche}
             placeholder="Chercher un commentaire, un auteur ou un id activité"
             placeholderTextColor={colors.muted}
-            value={commentSearch}
-            onChangeText={setCommentSearch}
+            value={rechercheCommentaire}
+            onChangeText={setRechercheCommentaire}
           />
 
-          {filteredComments.slice(0, 80).map((comment) => (
-            <View key={`${comment.activityId}-${comment.id}`} style={s.userCard}>
+          {commentairesFiltres.slice(0, 80).map((commentaire) => (
+            <View key={`${commentaire.activityId}-${commentaire.id}`} style={styles.ligneItem}>
               <View style={{ flex: 1 }}>
-                <Text style={s.userName}>{comment.userName || "Utilisateur"}</Text>
-                <Text style={s.userMeta}>{comment.text || "(commentaire vide)"}</Text>
-                <Text style={s.userMeta}>activité: {comment.activityId}</Text>
+                <Text style={styles.nomItem}>{commentaire.userName || "Utilisateur"}</Text>
+                <Text style={styles.metaItem}>{commentaire.text || "(commentaire vide)"}</Text>
+                <Text style={styles.metaItem}>activité: {commentaire.activityId}</Text>
               </View>
               <TouchableOpacity
-                style={[s.smallBtn, s.deleteBtn]}
-                onPress={() => handleDeleteComment(comment.activityId, comment.id)}
-                disabled={deleting === comment.id}
+                style={[styles.petitBouton, styles.boutonSupprimer]}
+                onPress={() => supprimerCommentaire(commentaire.activityId, commentaire.id)}
+                disabled={supprimantId === commentaire.id}
               >
-                <Text style={s.smallBtnText}>Supprimer</Text>
+                <Text style={styles.petitBoutonTexte}>Supprimer</Text>
               </TouchableOpacity>
             </View>
           ))}
         </View>
+
       </View>
     </ScrollView>
   );
 }
 
-const s = StyleSheet.create({
-  container: {
+const styles = StyleSheet.create({
+  ecran: {
     flex: 1,
     backgroundColor: colors.bg,
   },
-  content: {
+  contenu: {
     padding: 20,
     paddingBottom: 40,
   },
-  header: {
+
+  // en-tête de page
+  entete: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
     marginBottom: 24,
   },
-  title: {
+  titrePage: {
     fontSize: 28,
     fontWeight: "800",
     color: colors.text,
   },
-  countText: {
-    fontSize: 14,
-    color: colors.muted,
-    marginBottom: 16,
-    fontWeight: "600",
-  },
-  emptyState: {
+
+  // états vides
+  blocVide: {
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 60,
   },
-  emptyTitle: {
+  titreVide: {
     fontSize: 18,
     fontWeight: "700",
     color: colors.text,
     marginTop: 12,
   },
-  emptyText: {
+  texteVide: {
     fontSize: 14,
     color: colors.muted,
     marginTop: 4,
+    textAlign: "center",
   },
-  reportCard: {
+
+  // signalements
+  nbSignalements: {
+    fontSize: 14,
+    color: colors.muted,
+    marginBottom: 16,
+    fontWeight: "600",
+  },
+  carteSignalement: {
     backgroundColor: "#0f172a",
     borderRadius: 16,
     padding: 16,
@@ -610,37 +605,37 @@ const s = StyleSheet.create({
     borderLeftWidth: 4,
     borderLeftColor: "#f97316",
   },
-  reportHeader: {
+  enteteSignalement: {
     flexDirection: "row",
     alignItems: "flex-start",
     marginBottom: 12,
     gap: 12,
   },
-  reportTitle: {
+  titreSignalement: {
     fontSize: 15,
     fontWeight: "700",
     color: colors.text,
     marginBottom: 4,
   },
-  reportReason: {
+  raisonSignalement: {
     fontSize: 13,
     color: colors.muted,
   },
-  reportBadge: {
+  iconeSignalement: {
     backgroundColor: "#1e293b",
     borderRadius: 8,
     padding: 8,
   },
-  reportMeta: {
+  metaSignalement: {
     fontSize: 12,
     color: colors.muted,
     marginBottom: 12,
   },
-  actionsRow: {
+  ligneActions: {
     flexDirection: "row",
     gap: 8,
   },
-  btn: {
+  bouton: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
@@ -649,40 +644,42 @@ const s = StyleSheet.create({
     paddingVertical: 12,
     gap: 6,
   },
-  deleteBtn: {
+  boutonSupprimer: {
     backgroundColor: "#ef4444",
   },
-  deleteBtnText: {
+  boutonSupprimerTexte: {
     color: "#fff",
     fontWeight: "700",
     fontSize: 14,
   },
-  ignoreBtn: {
+  boutonIgnorer: {
     backgroundColor: "#1e293b",
   },
-  ignoreBtnText: {
+  boutonIgnorerTexte: {
     color: colors.text,
     fontWeight: "700",
     fontSize: 14,
   },
-  sectionCard: {
+
+  // sections (utilisateurs, activités, commentaires)
+  sectionCarte: {
     marginTop: 18,
     backgroundColor: "#0f172a",
     borderRadius: 16,
     padding: 14,
   },
-  sectionHeader: {
+  sectionEntete: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
     marginBottom: 10,
   },
-  sectionTitle: {
+  sectionTitre: {
     fontSize: 18,
     fontWeight: "700",
     color: colors.text,
   },
-  searchInput: {
+  champRecherche: {
     backgroundColor: "#020617",
     borderColor: "#1e293b",
     borderWidth: 1,
@@ -692,7 +689,9 @@ const s = StyleSheet.create({
     paddingVertical: 10,
     marginBottom: 10,
   },
-  userCard: {
+
+  // ligne d'un item (utilisateur, activité ou commentaire)
+  ligneItem: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
@@ -703,37 +702,36 @@ const s = StyleSheet.create({
     padding: 12,
     marginBottom: 8,
   },
-  userName: {
+  nomItem: {
     color: colors.text,
     fontWeight: "700",
     marginBottom: 2,
   },
-  userMeta: {
+  metaItem: {
     color: colors.muted,
     fontSize: 12,
   },
-  smallActionsRow: {
-    gap: 6,
-  },
-  smallBtn: {
+
+  // petits boutons d'action
+  petitBouton: {
     borderRadius: 8,
     paddingVertical: 8,
     paddingHorizontal: 10,
     alignItems: "center",
     justifyContent: "center",
   },
-  smallBtnText: {
+  petitBoutonTexte: {
     color: "#fff",
     fontWeight: "700",
     fontSize: 12,
   },
-  warnBtn: {
+  petitBoutonAvertir: {
     backgroundColor: "#f59e0b",
   },
-  banBtn: {
+  petitBoutonBannir: {
     backgroundColor: "#ef4444",
   },
-  unbanBtn: {
+  petitBoutonDebannir: {
     backgroundColor: "#10b981",
   },
 });

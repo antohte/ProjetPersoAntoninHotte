@@ -1,4 +1,3 @@
-// app main feed
 import { Ionicons } from "@expo/vector-icons";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
@@ -10,18 +9,16 @@ import {
   collection,
   deleteDoc,
   doc,
-  getDoc,
   getDocs,
   limit,
   orderBy,
   query,
-  QueryDocumentSnapshot,
   startAfter,
   Timestamp,
   updateDoc,
-  where
+  where,
 } from "firebase/firestore";
-import React, { useEffect, useMemo, useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Modal,
   RefreshControl,
@@ -33,24 +30,11 @@ import {
   View,
 } from "react-native";
 import { UserAvatar } from "../../components/UserAvatar";
-import { AnimatedCard } from "../../components/ui/animated-card";
-import { EmptyState } from "../../components/ui/empty-state";
-import { SkeletonActivityCard } from "../../components/ui/skeleton";
 import { colors } from "../../constants/color";
 import { auth, db } from "../../lib/firebase";
+import { getUserDisplayName } from "../../lib/user";
 
-type Activity = {
-  id: string;
-  title: string;
-  description: string;
-  place: string;
-  date: Timestamp;
-  ownerId: string;
-  creatorName?: string;
-  participants: string[];
-  category?: string;
-};
-
+// liste des catégories disponibles
 const CATEGORIES = [
   { id: "all", label: "Tout", icon: "apps" },
   { id: "bar", label: "Bar", icon: "beer" },
@@ -59,398 +43,316 @@ const CATEGORIES = [
   { id: "culture", label: "Culture", icon: "color-palette" },
   { id: "soiree", label: "Soirée", icon: "musical-notes" },
   { id: "autre", label: "Autre", icon: "ellipsis-horizontal" },
-] as const;
+];
 
-type Comment = {
-  id: string;
-  text: string;
-  userId: string;
-  userName?: string;
-  createdAt?: Timestamp;
-};
+// raisons disponibles pour signaler une activité
+const RAISONS_SIGNALEMENT = ["Contenu inapproprié", "Spam", "Arnaque", "Autre"];
 
-// post general
+// nombre d'activités chargées par page
+const NB_PAR_PAGE = 10;
 
-type ActivityCardProps = {
-  activity: Activity;
-  isParticipant: boolean;
-  onToggleParticipation: () => void;
-  comments: Comment[];
-  draftComment: string;
-  onChangeDraft: (text: string) => void;
-  onSendComment: () => void;
-  onCardPress: () => void;
-  onDeleteComment: (commentId: string) => void;
-  onReport: (activityId: string, reason: string) => void;
-};
+// ---- Carte d'une activité ----
+function ActivityCard({ activity, isParticipant, onToggleParticipation, comments, draftComment, onChangeDraft, onSendComment, onCardPress, onDeleteComment, onReport }: any) {
+  const [showModalSignalement, setShowModalSignalement] = useState(false);
 
-const ActivityCard: React.FC<ActivityCardProps> = ({
-  activity,
-  isParticipant,
-  onToggleParticipation,
-  comments,
-  draftComment,
-  onChangeDraft,
-  onSendComment,
-  onCardPress,
-  onDeleteComment,
-  onReport,
-}) => {
-  const [showReportModal, setShowReportModal] = useState(false);
-  
-  const jsDate = activity.date.toDate();
-  const isPast = jsDate.getTime() < Date.now();
+  const date = activity.date.toDate();
+  const estTerminee = date.getTime() < Date.now();
+  const dateFormatee = format(date, "EEE dd MMM. 'à' HH:mm", { locale: fr });
+  const nomCreateur = activity.creatorName || "Utilisateur";
 
-  const dateLabel = format(jsDate, "EEE dd MMM. 'à' HH:mm", { locale: fr });
+  // trouver la catégorie pour afficher l'icone et le label
+  const categorieInfo = CATEGORIES.find((c) => c.id === activity.category);
+  const categorieLabel = categorieInfo?.label || "Autre";
+  const categorieIcone = (categorieInfo?.icon || "ellipsis-horizontal") as any;
 
-  const displayName = activity.creatorName || "Utilisateur";
-  const initial = displayName.trim()[0]?.toUpperCase() ?? "U";
-
-  const previewComments = comments.slice(0, 3);
-  const moreCount = comments.length - previewComments.length;
-  
-  const categoryData = CATEGORIES.find(c => c.id === activity.category);
-  const categoryLabel = categoryData?.label || "Autre";
-  const categoryIcon = categoryData?.icon || "ellipsis-horizontal";
+  // on affiche seulement les 3 derniers commentaires dans le feed
+  const commentairesAffiches = comments.slice(0, 3);
+  const nbCommentairesRestants = comments.length - commentairesAffiches.length;
 
   return (
-    <View style={s.card}>
-      {/*style story/post insta */}
+    <View style={styles.card}>
+
+      {/* en-tête : avatar + nom + catégorie */}
       <TouchableOpacity onPress={onCardPress} activeOpacity={0.9}>
-        <View style={s.cardHeader}>
-          <UserAvatar userId={activity.ownerId} size={40} userName={displayName} />
+        <View style={styles.cardEnTete}>
+          <UserAvatar userId={activity.ownerId} size={40} userName={nomCreateur} />
           <View style={{ flex: 1 }}>
-            <Text style={s.creatorName}>{displayName}</Text>
+            <Text style={styles.nomCreateur}>{nomCreateur}</Text>
           </View>
           {activity.category && (
-            <View style={s.categoryBadge}>
-              <Ionicons name={categoryIcon as any} size={12} color={colors.primary} />
-              <Text style={s.categoryBadgeText}>{categoryLabel}</Text>
+            <View style={styles.badgeCategorie}>
+              <Ionicons name={categorieIcone} size={12} color={colors.primary} />
+              <Text style={styles.badgeCategorieTexte}>{categorieLabel}</Text>
             </View>
           )}
         </View>
 
-        {/* post */}
-        <View style={s.cardBody}>
-          <Text style={s.title}>{activity.title}</Text>
+        {/* corps : titre, description, date, lieu, participants */}
+        <View style={styles.cardCorps}>
+          <Text style={styles.titre}>{activity.title}</Text>
           {activity.description ? (
-            <Text style={s.description} numberOfLines={2}>
-              {activity.description}
-            </Text>
+            <Text style={styles.description} numberOfLines={2}>{activity.description}</Text>
           ) : null}
-
-          <View style={s.chipsRow}>
-            <View style={s.chip}>
-              <Text style={s.chipText}>{dateLabel}</Text>
-            </View>
+          <View style={styles.ligneInfos}>
+            <View style={styles.puce}><Text style={styles.puceTexte}>{dateFormatee}</Text></View>
             {activity.place ? (
-              <View style={s.chip}>
-                <Text style={s.chipText}>{activity.place}</Text>
-              </View>
+              <View style={styles.puce}><Text style={styles.puceTexte}>{activity.place}</Text></View>
             ) : null}
           </View>
-
-          <Text style={s.participantsText}>
-            {activity.participants.length} participant(s)
-          </Text>
+          <Text style={styles.nbParticipants}>{activity.participants.length} participant(s)</Text>
         </View>
       </TouchableOpacity>
 
-      {/*like/comment */}
-      <View style={s.actionsRow}>
+      {/* boutons d'action : participer, commenter, signaler */}
+      <View style={styles.ligneActions}>
         <TouchableOpacity
           style={[
-            s.participateBtn,
-            isPast && s.participateBtnPast,
-            isParticipant && !isPast && s.participateBtnActive,
+            styles.boutonParticiper,
+            estTerminee && styles.boutonParticiperTerminee,
+            isParticipant && !estTerminee && styles.boutonParticiperActif,
           ]}
-          disabled={isPast}
+          disabled={estTerminee}
           onPress={onToggleParticipation}
         >
-          <Text
-            style={[
-              s.participateText,
-              isPast && s.participateTextPast,
-            ]}
-          >
-            {isPast
-              ? "Terminée"
-              : isParticipant
-              ? "Tu participes"
-              : "Participer"}
+          <Text style={[styles.texteParticiper, estTerminee && styles.texteParticiperTerminee]}>
+            {estTerminee ? "Terminée" : isParticipant ? "Tu participes" : "Participer"}
           </Text>
         </TouchableOpacity>
 
-        <View style={s.commentLabelWrapper}>
-          <Text style={s.commentLabel}>Commenter</Text>
+        <View style={styles.wrapperCommenter}>
+          <Text style={styles.texteCommenter}>Commenter</Text>
         </View>
 
-        <TouchableOpacity 
-          style={s.reportBtn}
-          onPress={() => setShowReportModal(true)}
-        >
+        <TouchableOpacity style={styles.boutonSignaler} onPress={() => setShowModalSignalement(true)}>
           <Ionicons name="flag-outline" size={18} color={colors.muted} />
         </TouchableOpacity>
       </View>
 
-      {/*commentaires */}
-      <View style={s.commentsBlock}>
-        {previewComments.map((c) => {
-          const isOwnComment = auth.currentUser && c.userId === auth.currentUser.uid;
+      {/* liste des commentaires (max 3) */}
+      <View style={styles.blocCommentaires}>
+        {commentairesAffiches.map((c: any) => {
+          const estMonCommentaire = auth.currentUser && c.userId === auth.currentUser.uid;
           return (
-            <View key={c.id} style={s.commentLineContainer}>
+            <View key={c.id} style={styles.ligneCommentaire}>
               <UserAvatar userId={c.userId} size={28} userName={c.userName} />
               <View style={{ flex: 1, marginLeft: 8 }}>
-                <Text style={s.commentLine}>
-                  <Text style={s.commentAuthor}>
+                <Text style={styles.texteCommentaire}>
+                  <Text style={styles.auteurCommentaire}>
                     {c.userName || "Anon"}
-                    {isOwnComment && <Text style={s.youBadgeInline}> (Vous)</Text>}
+                    {estMonCommentaire && <Text style={styles.badgeMoi}> (Vous)</Text>}
                   </Text>
                   {" "}{c.text}
                 </Text>
                 {c.createdAt && (
-                  <Text style={s.commentTimestamp}>
+                  <Text style={styles.dateCommentaire}>
                     {format(c.createdAt.toDate(), "dd MMM à HH:mm", { locale: fr })}
                   </Text>
                 )}
               </View>
-              {isOwnComment && (
-                <TouchableOpacity
-                  style={s.deleteCommentBtn}
-                  onPress={() => onDeleteComment(c.id)}
-                >
-                  <Text style={s.deleteCommentText}>Supprimer</Text>
+              {estMonCommentaire && (
+                <TouchableOpacity style={styles.boutonSupprimerComm} onPress={() => onDeleteComment(c.id)}>
+                  <Text style={styles.texteSupprimerComm}>Supprimer</Text>
                 </TouchableOpacity>
               )}
             </View>
           );
         })}
 
-        {moreCount > 0 && (
+        {/* lien pour voir les commentaires suivants */}
+        {nbCommentairesRestants > 0 && (
           <TouchableOpacity onPress={onCardPress}>
-            <Text style={s.moreComments}>
-              Voir {moreCount} autre(s) commentaire(s)…
+            <Text style={styles.voirPlusCommentaires}>
+              Voir {nbCommentairesRestants} autre(s) commentaire(s)…
             </Text>
           </TouchableOpacity>
         )}
 
-        <View style={s.commentInputRow}>
+        {/* champ pour écrire un commentaire */}
+        <View style={styles.ligneEcrireCommentaire}>
           <TextInput
-            style={s.commentInput}
+            style={styles.champCommentaire}
             placeholder="Ajouter un commentaire..."
             placeholderTextColor={colors.muted}
             value={draftComment}
             onChangeText={onChangeDraft}
           />
-          <TouchableOpacity style={s.sendBtn} onPress={onSendComment}>
-            <Text style={s.sendBtnText}>{">"}</Text>
+          <TouchableOpacity style={styles.boutonEnvoyer} onPress={onSendComment}>
+            <Text style={styles.boutonEnvoyerTexte}>{">"}</Text>
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* modal signalement */}
+      {/* modal de signalement */}
       <Modal
-        visible={showReportModal}
+        visible={showModalSignalement}
         transparent
         animationType="fade"
-        onRequestClose={() => setShowReportModal(false)}
+        onRequestClose={() => setShowModalSignalement(false)}
       >
-        <View style={s.modalOverlay}>
-          <View style={s.modalContent}>
-            <Text style={s.modalTitle}>Signaler cette activité</Text>
-            <Text style={s.modalSubtitle}>S&eacute;lectionner une raison</Text>
+        <View style={styles.modalFond}>
+          <View style={styles.modalContenu}>
+            <Text style={styles.modalTitre}>Signaler cette activité</Text>
+            <Text style={styles.modalSousTitre}>Sélectionner une raison</Text>
 
-            {["Contenu inapproprié", "Spam", "Arnaque", "Autre"].map((reason) => (
+            {RAISONS_SIGNALEMENT.map((raison) => (
               <TouchableOpacity
-                key={reason}
-                style={s.modalOption}
+                key={raison}
+                style={styles.modalOption}
                 onPress={() => {
-                  onReport(activity.id, reason);
-                  setShowReportModal(false);
+                  onReport(activity.id, raison);
+                  setShowModalSignalement(false);
                 }}
               >
-                <Text style={s.modalOptionText}>{reason}</Text>
+                <Text style={styles.modalOptionTexte}>{raison}</Text>
               </TouchableOpacity>
             ))}
 
-            <TouchableOpacity
-              style={s.modalCancelBtn}
-              onPress={() => setShowReportModal(false)}
-            >
-              <Text style={s.modalCancelText}>Annuler</Text>
+            <TouchableOpacity style={styles.modalAnnuler} onPress={() => setShowModalSignalement(false)}>
+              <Text style={styles.modalAnnulerTexte}>Annuler</Text>
             </TouchableOpacity>
           </View>
         </View>
       </Modal>
     </View>
   );
-};
+}
 
-// ecran feed
-
-const ACTIVITIES_PER_PAGE = 10;
-
+// ---- Écran principal du feed ----
 export default function FeedScreen() {
-  const [activities, setActivities] = useState<Activity[]>([]);
-  const [refreshing, setRefreshing] = useState(false);
+  // liste des activités chargées
+  const [activities, setActivities] = useState<any[]>([]);
+
+  // états de chargement
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
-  const [lastDoc, setLastDoc] = useState<QueryDocumentSnapshot | null>(null);
-  const [commentsByActivity, setCommentsByActivity] = useState<
-    Record<string, Comment[]>
-  >({});
-  const [draftComments, setDraftComments] = useState<Record<string, string>>(
-    {}
-  );
-  
-  // Filtres
+  const [lastDoc, setLastDoc] = useState<any>(null);
+
+  // commentaires et brouillons par activité
+  const [commentsByActivity, setCommentsByActivity] = useState<any>({});
+  const [draftComments, setDraftComments] = useState<any>({});
+
+  // filtres et recherche
   const [searchText, setSearchText] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [showFilters, setShowFilters] = useState(false);
 
   const user = auth.currentUser;
 
-  // charger les activites initial ou plus
-  const loadActivities = async (isLoadMore = false) => {
+  // charger les activités depuis Firebase
+  const loadActivities = async (loadMore = false) => {
+    if (loadMore) {
+      setLoadingMore(true);
+    } else {
+      setLoading(true);
+    }
+
     try {
-      if (isLoadMore) {
-        setLoadingMore(true);
-      } else {
-        setLoading(true);
-      }
-
-      // construire la requete de base
-      const constraints: any[] = [];
-      
-      // filtre par categorie
+      // construire la requête avec ou sans filtre catégorie
+      const conditions: any[] = [];
       if (selectedCategory !== "all") {
-        constraints.push(where("category", "==", selectedCategory));
+        conditions.push(where("category", "==", selectedCategory));
       }
-      
-      // toujours trier par date
-      constraints.push(orderBy("date", "asc"));
-      constraints.push(limit(ACTIVITIES_PER_PAGE));
+      conditions.push(orderBy("date", "asc"));
+      conditions.push(limit(NB_PAR_PAGE));
 
-      let q = query(collection(db, "activities"), ...constraints);
+      let q = query(collection(db, "activities"), ...conditions);
 
-      // si chargement de plus, utiliser startAfter
-      if (isLoadMore && lastDoc) {
-        const constraintsWithPagination = [...constraints.slice(0, -1), startAfter(lastDoc), limit(ACTIVITIES_PER_PAGE)];
-        q = query(collection(db, "activities"), ...constraintsWithPagination);
-      }
-
-      const snap = await getDocs(q);
-      
-      if (snap.empty) {
-        setHasMore(false);
-        if (isLoadMore) setLoadingMore(false);
-        else setLoading(false);
-        return;
-      }
-
-      let list: Activity[] = snap.docs.map((d) => {
-        const data = d.data() as any;
-        return {
-          id: d.id,
-          title: data.title,
-          description: data.description ?? "",
-          place: data.place ?? "",
-          date: data.date,
-          ownerId: data.ownerId,
-          creatorName:
-            data.creatorName ??
-            data.ownerDisplayName ??
-            data.ownerEmail ??
-            "Utilisateur",
-          participants: data.participants ?? [],
-          category: data.category ?? "autre",
-        };
-      });
-
-      // Filtrer côté client pour la recherche textuelle
-      if (searchText.trim()) {
-        const search = searchText.toLowerCase();
-        list = list.filter(
-          (a) =>
-            a.title.toLowerCase().includes(search) ||
-            a.description.toLowerCase().includes(search) ||
-            a.place.toLowerCase().includes(search)
+      // si on charge la suite, on commence après le dernier doc
+      if (loadMore && lastDoc) {
+        q = query(
+          collection(db, "activities"),
+          ...conditions.slice(0, -1),
+          startAfter(lastDoc),
+          limit(NB_PAR_PAGE)
         );
       }
 
-      if (isLoadMore) {
-        setActivities((prev) => [...prev, ...list]);
-      } else {
-        setActivities(list);
+      const resultat = await getDocs(q);
+
+      if (resultat.empty) {
+        setHasMore(false);
+        setLoadingMore(false);
+        setLoading(false);
+        return;
       }
 
-      // mettre a jour le dernier doc
-      setLastDoc(snap.docs[snap.docs.length - 1]);
-      
-      // verifier sil y a plus de docs
-      setHasMore(snap.docs.length === ACTIVITIES_PER_PAGE);
+      // transformer les docs Firebase en objets JS simples
+      let liste = resultat.docs.map((doc) => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          title: data.title,
+          description: data.description || "",
+          place: data.place || "",
+          date: data.date,
+          ownerId: data.ownerId,
+          creatorName: data.creatorName || data.ownerDisplayName || "Utilisateur",
+          participants: data.participants || [],
+          category: data.category || "autre",
+        };
+      });
 
-      if (isLoadMore) setLoadingMore(false);
-      else setLoading(false);
+      // filtrer par recherche texte (côté client)
+      if (searchText.trim() !== "") {
+        const recherche = searchText.toLowerCase();
+        liste = liste.filter((a) =>
+          a.title.toLowerCase().includes(recherche) ||
+          a.description.toLowerCase().includes(recherche) ||
+          a.place.toLowerCase().includes(recherche)
+        );
+      }
+
+      // ajouter à la liste ou remplacer selon si on charge la suite
+      if (loadMore) {
+        setActivities((prev) => [...prev, ...liste]);
+      } else {
+        setActivities(liste);
+      }
+
+      setLastDoc(resultat.docs[resultat.docs.length - 1]);
+      setHasMore(resultat.docs.length === NB_PAR_PAGE);
     } catch (err) {
       console.log("Erreur chargement activités :", err);
-      if (isLoadMore) setLoadingMore(false);
-      else setLoading(false);
     }
+
+    setLoadingMore(false);
+    setLoading(false);
   };
 
-  // chargement initial et rechargement quand les filtres changent
+  // recharger quand la catégorie ou la recherche change
   useEffect(() => {
     setLastDoc(null);
     setHasMore(true);
     loadActivities();
   }, [selectedCategory, searchText]);
 
-
-  // charger commentaires pour les activites chargees (3 derniers seulement)
+  // charger les 3 derniers commentaires de chaque activité
   useEffect(() => {
-    const ids = activities.map((a) => a.id);
-    if (ids.length === 0) return;
+    if (activities.length === 0) return;
 
-    // utiliser getDocs au lieu de onSnapshot pour eviter les couts
-    const loadComments = async () => {
-      const commentPromises = ids.map(async (id) => {
+    const chargerCommentaires = async () => {
+      const resultat: any = {};
+
+      for (const activite of activities) {
         const q = query(
-          collection(db, "activities", id, "comments"),
+          collection(db, "activities", activite.id, "comments"),
           orderBy("createdAt", "desc"),
           limit(3)
         );
-
         const snap = await getDocs(q);
-        const list: Comment[] = snap.docs.map((d) => {
-          const data = d.data() as any;
-          return {
-            id: d.id,
-            text: data.text,
-            userId: data.userId,
-            userName: data.userName,
-            createdAt: data.createdAt,
-          };
-        });
-        
-        // inverser pour afficher du plus ancien au plus recent
-        return { id, comments: list.reverse() };
-      });
+        const liste = snap.docs.map((d) => ({ id: d.id, ...d.data() })).reverse();
+        resultat[activite.id] = liste;
+      }
 
-      const results = await Promise.all(commentPromises);
-      const commentsMap: Record<string, Comment[]> = {};
-      results.forEach(({ id, comments }) => {
-        commentsMap[id] = comments;
-      });
-      setCommentsByActivity(commentsMap);
+      setCommentsByActivity(resultat);
     };
 
-    loadComments().catch((err) => {
-      console.log("Erreur commentaires :", err);
-    });
-  }, [JSON.stringify(activities.map((a) => a.id))]);
+    chargerCommentaires().catch((err) => console.log("Erreur commentaires :", err));
+  }, [activities.map((a) => a.id).join(",")]);
 
+  // rafraîchir la liste (pull to refresh)
   const onRefresh = async () => {
     setRefreshing(true);
     setLastDoc(null);
@@ -459,70 +361,42 @@ export default function FeedScreen() {
     setRefreshing(false);
   };
 
-  const handleLoadMore = () => {
-    if (!loadingMore && hasMore) {
-      loadActivities(true);
-    }
-  };
-
-  // participation
-  const toggleParticipation = async (activity: Activity) => {
+  // rejoindre ou quitter une activité
+  const toggleParticipation = async (activity: any) => {
     if (!user) return;
-    const ref = doc(db, "activities", activity.id);
-    const isParticipant = activity.participants.includes(user.uid);
-
+    const dejaDedans = activity.participants.includes(user.uid);
     try {
-      await updateDoc(ref, {
-        participants: isParticipant
-          ? arrayRemove(user.uid)
-          : arrayUnion(user.uid),
+      await updateDoc(doc(db, "activities", activity.id), {
+        participants: dejaDedans ? arrayRemove(user.uid) : arrayUnion(user.uid),
       });
     } catch (e) {
       console.log("Erreur participation :", e);
     }
   };
 
-  // envoi commentaire
-  const handleSendComment = async (activityId: string) => {
-    const txt = draftComments[activityId]?.trim();
-    if (!txt || !user) return;
+  // envoyer un commentaire
+  const envoyerCommentaire = async (activityId: string) => {
+    const texte = draftComments[activityId]?.trim();
+    if (!texte || !user) return;
 
     try {
-      // recuperer le displayname depuis firestore si dispo
-      let userName = user.displayName || "";
-      
-      if (!userName) {
-        try {
-          const userDoc = await getDoc(doc(db, "users", user.uid));
-          if (userDoc.exists()) {
-            userName = userDoc.data().displayName || "";
-          }
-        } catch (e) {
-          console.log("Erreur récupération displayName:", e);
-        }
-      }
-      
-      // fallback sur email en dernier recours
-      if (!userName) {
-        userName = user.email?.split("@")[0] || "Utilisateur";
-      }
-
+      const userName = await getUserDisplayName();
       await addDoc(collection(db, "activities", activityId, "comments"), {
-        text: txt,
+        text: texte,
         userId: user.uid,
         userName,
         createdAt: Timestamp.now(),
       });
-
-      setDraftComments((prev) => ({ ...prev, [activityId]: "" }));
+      // vider le champ après envoi
+      setDraftComments((prev: any) => ({ ...prev, [activityId]: "" }));
     } catch (e) {
       console.log("Erreur ajout commentaire :", e);
     }
   };
-  // suppression commentaire
-  const handleDeleteComment = async (activityId: string, commentId: string) => {
-    if (!user) return;
 
+  // supprimer un commentaire
+  const supprimerCommentaire = async (activityId: string, commentId: string) => {
+    if (!user) return;
     try {
       await deleteDoc(doc(db, "activities", activityId, "comments", commentId));
     } catch (e) {
@@ -530,14 +404,13 @@ export default function FeedScreen() {
     }
   };
 
-  // signalement activite
-  const handleReport = async (activityId: string, reason: string) => {
+  // signaler une activité
+  const signalerActivite = async (activityId: string, raison: string) => {
     if (!user) return;
-
     try {
       await addDoc(collection(db, "reports"), {
         activityId,
-        reason,
+        reason: raison,
         reportedBy: user.uid,
         reportedAt: Timestamp.now(),
       });
@@ -548,42 +421,29 @@ export default function FeedScreen() {
     }
   };
 
-  // separation a venir terminees
-  const { upcomingActivities, pastActivities } = useMemo(() => {
-    const now = Date.now();
-
-    const upcoming = activities.filter(
-      (a) => a.date.toDate().getTime() >= now
-    );
-    const past = activities.filter((a) => a.date.toDate().getTime() < now);
-
-    past.sort(
-      (a, b) => b.date.toDate().getTime() - a.date.toDate().getTime()
-    );
-
-    return { upcomingActivities: upcoming, pastActivities: past };
-  }, [activities]);
+  // séparer les activités à venir et les terminées
+  const maintenant = Date.now();
+  const activitesAVenir = activities.filter((a) => a.date.toDate().getTime() >= maintenant);
+  const activitesTerminees = activities
+    .filter((a) => a.date.toDate().getTime() < maintenant)
+    .sort((a, b) => b.date.toDate().getTime() - a.date.toDate().getTime());
 
   return (
     <ScrollView
-      style={s.screen}
-      contentContainerStyle={s.content}
+      style={styles.ecran}
+      contentContainerStyle={styles.contenu}
       refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={onRefresh}
-          tintColor={colors.primary}
-        />
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
       }
     >
-      <Text style={s.pageTitle}>Activités</Text>
+      <Text style={styles.titrePage}>Activités</Text>
 
       {/* barre de recherche */}
-      <View style={s.searchContainer}>
-        <View style={s.searchBar}>
+      <View style={styles.ligneRecherche}>
+        <View style={styles.barreRecherche}>
           <Ionicons name="search" size={20} color={colors.muted} />
           <TextInput
-            style={s.searchInput}
+            style={styles.champRecherche}
             placeholder="Rechercher une activité..."
             placeholderTextColor={colors.muted}
             value={searchText}
@@ -595,39 +455,28 @@ export default function FeedScreen() {
             </TouchableOpacity>
           )}
         </View>
-        <TouchableOpacity 
-          style={s.filterToggleBtn}
-          onPress={() => setShowFilters(!showFilters)}
-        >
+        <TouchableOpacity style={styles.boutonFiltres} onPress={() => setShowFilters(!showFilters)}>
           <Ionicons name="options" size={20} color={colors.text} />
         </TouchableOpacity>
       </View>
 
-      {/* filtres par categorie */}
+      {/* filtres par catégorie */}
       {showFilters && (
-        <View style={s.filtersContainer}>
-          <Text style={s.filterLabel}>Catégories</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.categoryScroll}>
+        <View style={styles.zoneFiltres}>
+          <Text style={styles.labelFiltres}>Catégories</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             {CATEGORIES.map((cat) => (
               <TouchableOpacity
                 key={cat.id}
-                style={[
-                  s.categoryChip,
-                  selectedCategory === cat.id && s.categoryChipActive,
-                ]}
+                style={[styles.chipCategorie, selectedCategory === cat.id && styles.chipCategorieActif]}
                 onPress={() => setSelectedCategory(cat.id)}
               >
-                <Ionicons 
-                  name={cat.icon as any} 
-                  size={16} 
-                  color={selectedCategory === cat.id ? "#0b111f" : colors.text} 
+                <Ionicons
+                  name={cat.icon as any}
+                  size={16}
+                  color={selectedCategory === cat.id ? "#0b111f" : colors.text}
                 />
-                <Text
-                  style={[
-                    s.categoryChipText,
-                    selectedCategory === cat.id && s.categoryChipTextActive,
-                  ]}
-                >
+                <Text style={[styles.chipCategorieTexte, selectedCategory === cat.id && styles.chipCategorieTexteActif]}>
                   {cat.label}
                 </Text>
               </TouchableOpacity>
@@ -636,130 +485,102 @@ export default function FeedScreen() {
         </View>
       )}
 
+      {/* affichage pendant le chargement */}
       {loading ? (
-        <>
-          <SkeletonActivityCard />
-          <SkeletonActivityCard />
-          <SkeletonActivityCard />
-        </>
+        <View style={styles.blocChargement}>
+          <Text style={styles.texteChargement}>Chargement des activités...</Text>
+        </View>
       ) : (
         <>
-          {/* a venir */}
-          <Text style={s.sectionTitle}>Activités à venir</Text>
-      {upcomingActivities.length === 0 ? (
-        <EmptyState 
-          icon="calendar-outline" 
-          title="Aucune activité à venir" 
-          description="Crée une nouvelle activité pour commencer"
-        />
-      ) : (
-        upcomingActivities.map((act, index) => {
-          const isParticipant =
-            !!user && act.participants.includes(user.uid);
-          const comments = commentsByActivity[act.id] ?? [];
-          const draft = draftComments[act.id] ?? "";
-
-          return (
-            <AnimatedCard key={act.id} delay={index * 100}>
+          {/* activités à venir */}
+          <Text style={styles.titreSecteur}>Activités à venir</Text>
+          {activitesAVenir.length === 0 ? (
+            <View style={styles.blocVide}>
+              <Text style={styles.titreVide}>Aucune activité à venir</Text>
+              <Text style={styles.descriptionVide}>Crée une nouvelle activité pour commencer</Text>
+            </View>
+          ) : (
+            activitesAVenir.map((activite) => (
               <ActivityCard
-              activity={act}
-              isParticipant={isParticipant}
-              onToggleParticipation={() => toggleParticipation(act)}
-              comments={comments}
-              draftComment={draft}
-              onChangeDraft={(text) =>
-                setDraftComments((prev) => ({
-                  ...prev,
-                  [act.id]: text,
-                }))
-              }
-              onSendComment={() => handleSendComment(act.id)}
-              onCardPress={() => router.push(`/(main)/activity-details?id=${act.id}` as any)}
-              onDeleteComment={(commentId) => handleDeleteComment(act.id, commentId)}
-              onReport={handleReport}
-            />
-            </AnimatedCard>
-          );
-        })
-      )}
+                key={activite.id}
+                activity={activite}
+                isParticipant={!!user && activite.participants.includes(user.uid)}
+                onToggleParticipation={() => toggleParticipation(activite)}
+                comments={commentsByActivity[activite.id] || []}
+                draftComment={draftComments[activite.id] || ""}
+                onChangeDraft={(texte: string) =>
+                  setDraftComments((prev: any) => ({ ...prev, [activite.id]: texte }))
+                }
+                onSendComment={() => envoyerCommentaire(activite.id)}
+                onCardPress={() => router.push(`/(main)/activity-details?id=${activite.id}` as any)}
+                onDeleteComment={(commentId: string) => supprimerCommentaire(activite.id, commentId)}
+                onReport={signalerActivite}
+              />
+            ))
+          )}
 
-          {/* terminees */}
-      <Text style={s.sectionTitle}>Activités terminées</Text>
-      {pastActivities.length === 0 ? (
-        <EmptyState 
-          icon="checkmark-circle-outline" 
-          title="Aucune activité terminée" 
-          description="Les activités passées apparaîtront ici"
-        />
-      ) : (
-        pastActivities.map((act, index) => {
-          const isParticipant =
-            !!user && act.participants.includes(user.uid);
-          const comments = commentsByActivity[act.id] ?? [];
-          const draft = draftComments[act.id] ?? "";
-
-          return (
-            <AnimatedCard key={act.id} delay={index * 100}>
+          {/* activités terminées */}
+          <Text style={styles.titreSecteur}>Activités terminées</Text>
+          {activitesTerminees.length === 0 ? (
+            <View style={styles.blocVide}>
+              <Text style={styles.titreVide}>Aucune activité terminée</Text>
+              <Text style={styles.descriptionVide}>Les activités passées apparaîtront ici</Text>
+            </View>
+          ) : (
+            activitesTerminees.map((activite) => (
               <ActivityCard
-              activity={act}
-              isParticipant={isParticipant}
-              onToggleParticipation={() => toggleParticipation(act)}
-              comments={comments}
-              draftComment={draft}
-              onChangeDraft={(text) =>
-                setDraftComments((prev) => ({
-                  ...prev,
-                  [act.id]: text,
-                }))
-              }
-              onSendComment={() => handleSendComment(act.id)}
-              onCardPress={() => router.push(`/(main)/activity-details?id=${act.id}` as any)}
-              onDeleteComment={(commentId) => handleDeleteComment(act.id, commentId)}
-              onReport={handleReport}
-            />
-            </AnimatedCard>
-          );
-        })
-      )}
+                key={activite.id}
+                activity={activite}
+                isParticipant={!!user && activite.participants.includes(user.uid)}
+                onToggleParticipation={() => toggleParticipation(activite)}
+                comments={commentsByActivity[activite.id] || []}
+                draftComment={draftComments[activite.id] || ""}
+                onChangeDraft={(texte: string) =>
+                  setDraftComments((prev: any) => ({ ...prev, [activite.id]: texte }))
+                }
+                onSendComment={() => envoyerCommentaire(activite.id)}
+                onCardPress={() => router.push(`/(main)/activity-details?id=${activite.id}` as any)}
+                onDeleteComment={(commentId: string) => supprimerCommentaire(activite.id, commentId)}
+                onReport={signalerActivite}
+              />
+            ))
+          )}
         </>
       )}
 
       {/* bouton charger plus */}
       {!loading && hasMore && (
         <TouchableOpacity
-          style={s.loadMoreBtn}
-          onPress={handleLoadMore}
+          style={styles.boutonChargerPlus}
+          onPress={() => loadActivities(true)}
           disabled={loadingMore}
         >
-          {loadingMore ? (
-            <Text style={s.loadMoreText}>Chargement...</Text>
-          ) : (
-            <Text style={s.loadMoreText}>Charger plus d&apos;activit&eacute;s</Text>
-          )}
+          <Text style={styles.boutonChargerPlusTexte}>
+            {loadingMore ? "Chargement..." : "Charger plus d'activités"}
+          </Text>
         </TouchableOpacity>
       )}
     </ScrollView>
   );
 }
 
-
-const s = StyleSheet.create({
-  screen: {
+const styles = StyleSheet.create({
+  ecran: {
     flex: 1,
     backgroundColor: colors.bg,
   },
-  content: {
+  contenu: {
     padding: 20,
     paddingBottom: 60,
   },
-  pageTitle: {
+  titrePage: {
     color: colors.text,
     fontSize: 28,
     fontWeight: "800",
     marginBottom: 20,
     letterSpacing: -0.5,
   },
-  sectionTitle: {
+  titreSecteur: {
     color: colors.text,
     fontSize: 20,
     fontWeight: "700",
@@ -767,12 +588,8 @@ const s = StyleSheet.create({
     marginBottom: 16,
     letterSpacing: -0.3,
   },
-  emptyText: {
-    color: colors.muted,
-    marginBottom: 12,
-  },
 
-  // card
+  // carte activité
   card: {
     backgroundColor: "#020617",
     borderRadius: 20,
@@ -784,30 +601,17 @@ const s = StyleSheet.create({
     shadowRadius: 8,
     elevation: 3,
   },
-  cardHeader: {
+  cardEnTete: {
     flexDirection: "row",
     alignItems: "center",
     marginBottom: 16,
   },
-  avatarCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: "#111827",
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 12,
-  },
-  avatarText: {
-    color: colors.text,
-    fontWeight: "700",
-  },
-  creatorName: {
+  nomCreateur: {
     color: colors.text,
     fontWeight: "700",
     fontSize: 14,
   },
-  categoryBadge: {
+  badgeCategorie: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#0f172a",
@@ -816,15 +620,15 @@ const s = StyleSheet.create({
     paddingVertical: 4,
     gap: 4,
   },
-  categoryBadgeText: {
+  badgeCategorieTexte: {
     color: colors.primary,
     fontSize: 11,
     fontWeight: "600",
   },
-  cardBody: {
+  cardCorps: {
     marginBottom: 16,
   },
-  title: {
+  titre: {
     color: colors.text,
     fontSize: 20,
     fontWeight: "700",
@@ -838,13 +642,13 @@ const s = StyleSheet.create({
     marginBottom: 12,
     lineHeight: 22,
   },
-  chipsRow: {
+  ligneInfos: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
     marginBottom: 8,
   },
-  chip: {
+  puce: {
     backgroundColor: "#0f172a",
     borderRadius: 12,
     paddingHorizontal: 14,
@@ -852,63 +656,65 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#1e293b",
   },
-  chipText: {
+  puceTexte: {
     color: colors.text,
     fontSize: 13,
     fontWeight: "500",
   },
-  participantsText: {
+  nbParticipants: {
     color: colors.muted,
     fontSize: 13,
     marginTop: 8,
     fontWeight: "500",
   },
 
-  actionsRow: {
+  // actions
+  ligneActions: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
     marginBottom: 16,
   },
-  reportBtn: {
-    padding: 8,
-    marginLeft: "auto",
-  },
-  participateBtn: {
+  boutonParticiper: {
     flex: 1,
     backgroundColor: colors.primary,
     borderRadius: 12,
     alignItems: "center",
     paddingVertical: 14,
   },
-  participateBtnActive: {
+  boutonParticiperActif: {
     backgroundColor: "#16a34a",
   },
-  participateBtnPast: {
+  boutonParticiperTerminee: {
     backgroundColor: "#4b5563",
   },
-  participateText: {
+  texteParticiper: {
     color: "#0b111f",
     fontWeight: "700",
   },
-  participateTextPast: {
+  texteParticiperTerminee: {
     color: "#fecaca",
   },
-  commentLabelWrapper: {
+  wrapperCommenter: {
     paddingHorizontal: 8,
   },
-  commentLabel: {
+  texteCommenter: {
     color: colors.muted,
     fontSize: 14,
   },
+  boutonSignaler: {
+    padding: 8,
+    marginLeft: "auto",
+  },
 
-  commentsBlock: {
+  // commentaires
+  blocCommentaires: {
     borderTopWidth: 1,
     borderTopColor: "#1e293b",
     paddingTop: 16,
     marginTop: 8,
   },
-  commentLineContainer: {
+  ligneCommentaire: {
     flexDirection: "row",
     alignItems: "flex-start",
     marginBottom: 12,
@@ -917,46 +723,45 @@ const s = StyleSheet.create({
     backgroundColor: "#0f172a",
     borderRadius: 12,
   },
-  commentLine: {
+  texteCommentaire: {
     color: colors.text,
     fontSize: 13,
     marginBottom: 2,
   },
-  commentAuthor: {
+  auteurCommentaire: {
     fontWeight: "700",
   },
-  youBadgeInline: {
+  badgeMoi: {
     color: colors.primary,
     fontWeight: "600",
     fontSize: 11,
   },
-  commentTimestamp: {
+  dateCommentaire: {
     color: colors.muted,
     fontSize: 11,
     marginTop: 2,
   },
-  deleteCommentBtn: {
+  boutonSupprimerComm: {
     paddingHorizontal: 8,
     paddingVertical: 4,
   },
-  deleteCommentText: {
+  texteSupprimerComm: {
     fontSize: 12,
     color: "#ef4444",
     fontWeight: "600",
   },
-  moreComments: {
+  voirPlusCommentaires: {
     color: colors.muted,
     fontSize: 12,
-    marginTop: 2,
     marginBottom: 6,
   },
-  commentInputRow: {
+  ligneEcrireCommentaire: {
     flexDirection: "row",
     alignItems: "center",
     marginTop: 12,
     gap: 12,
   },
-  commentInput: {
+  champCommentaire: {
     flex: 1,
     backgroundColor: "#0f172a",
     borderRadius: 12,
@@ -967,7 +772,7 @@ const s = StyleSheet.create({
     color: colors.text,
     fontSize: 14,
   },
-  sendBtn: {
+  boutonEnvoyer: {
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderRadius: 12,
@@ -975,30 +780,65 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  sendBtnText: {
+  boutonEnvoyerTexte: {
     color: "#0b111f",
     fontWeight: "800",
   },
-  loadMoreBtn: {
-    backgroundColor: colors.primary,
-    borderRadius: 12,
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    alignItems: "center",
-    marginTop: 20,
-    marginBottom: 20,
+
+  // modal signalement
+  modalFond: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.7)",
+    justifyContent: "flex-end",
   },
-  loadMoreText: {
-    color: "#0b111f",
+  modalContenu: {
+    backgroundColor: "#0f172a",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    borderTopWidth: 1,
+    borderTopColor: "#1e293b",
+  },
+  modalTitre: {
+    fontSize: 18,
     fontWeight: "700",
-    fontSize: 15,
+    color: colors.text,
+    marginBottom: 4,
   },
-  searchContainer: {
+  modalSousTitre: {
+    fontSize: 13,
+    color: colors.muted,
+    marginBottom: 16,
+  },
+  modalOption: {
+    backgroundColor: "#1e293b",
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 10,
+  },
+  modalOptionTexte: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  modalAnnuler: {
+    paddingVertical: 12,
+    marginTop: 8,
+  },
+  modalAnnulerTexte: {
+    color: colors.muted,
+    fontSize: 14,
+    fontWeight: "500",
+    textAlign: "center",
+  },
+
+  // recherche et filtres
+  ligneRecherche: {
     flexDirection: "row",
     gap: 12,
     marginBottom: 20,
   },
-  searchBar: {
+  barreRecherche: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
@@ -1010,12 +850,12 @@ const s = StyleSheet.create({
     borderColor: "#1e293b",
     gap: 12,
   },
-  searchInput: {
+  champRecherche: {
     flex: 1,
     color: colors.text,
     fontSize: 15,
   },
-  filterToggleBtn: {
+  boutonFiltres: {
     backgroundColor: "#0f172a",
     borderRadius: 12,
     width: 48,
@@ -1025,19 +865,16 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#1e293b",
   },
-  filtersContainer: {
+  zoneFiltres: {
     marginBottom: 20,
   },
-  filterLabel: {
+  labelFiltres: {
     color: colors.text,
     fontSize: 14,
     fontWeight: "600",
     marginBottom: 12,
   },
-  categoryScroll: {
-    flexGrow: 0,
-  },
-  categoryChip: {
+  chipCategorie: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#0f172a",
@@ -1049,63 +886,57 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#1e293b",
   },
-  categoryChipActive: {
+  chipCategorieActif: {
     backgroundColor: colors.primary,
     borderColor: colors.primary,
   },
-  categoryChipText: {
+  chipCategorieTexte: {
     color: colors.text,
     fontSize: 14,
     fontWeight: "600",
   },
-  categoryChipTextActive: {
+  chipCategorieTexteActif: {
     color: "#0b111f",
   },
-  
-  // modal signalement
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.7)",
-    justifyContent: "flex-end",
+
+  // chargement et états vides
+  blocChargement: {
+    paddingVertical: 40,
+    alignItems: "center",
   },
-  modalContent: {
-    backgroundColor: "#0f172a",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
-    borderTopWidth: 1,
-    borderTopColor: "#1e293b",
+  texteChargement: {
+    color: colors.muted,
+    fontSize: 16,
   },
-  modalTitle: {
-    fontSize: 18,
+  blocVide: {
+    paddingVertical: 30,
+    alignItems: "center",
+  },
+  titreVide: {
+    color: colors.text,
+    fontSize: 16,
     fontWeight: "700",
-    color: colors.text,
-    marginBottom: 4,
+    marginBottom: 6,
   },
-  modalSubtitle: {
-    fontSize: 13,
-    color: colors.muted,
-    marginBottom: 16,
-  },
-  modalOption: {
-    backgroundColor: "#1e293b",
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 10,
-  },
-  modalOptionText: {
-    color: colors.text,
-    fontSize: 14,
-    fontWeight: "500",
-  },
-  modalCancelBtn: {
-    paddingVertical: 12,
-    marginTop: 8,
-  },
-  modalCancelText: {
+  descriptionVide: {
     color: colors.muted,
     fontSize: 14,
-    fontWeight: "500",
     textAlign: "center",
+  },
+
+  // bouton charger plus
+  boutonChargerPlus: {
+    backgroundColor: colors.primary,
+    borderRadius: 12,
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    alignItems: "center",
+    marginTop: 20,
+    marginBottom: 20,
+  },
+  boutonChargerPlusTexte: {
+    color: "#0b111f",
+    fontWeight: "700",
+    fontSize: 15,
   },
 });

@@ -1,43 +1,34 @@
-import React, { useEffect, useState } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  TouchableOpacity,
-  RefreshControl,
-} from "react-native";
-import { collection, query, orderBy, onSnapshot, where } from "firebase/firestore";
-import { db, auth } from "../../lib/firebase";
-import { colors } from "../../constants/color";
 import { Ionicons } from "@expo/vector-icons";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { router } from "expo-router";
-import { markNotificationAsRead, deleteNotification } from "../../lib/notifications";
-import { EmptyState } from "../../components/ui/empty-state";
-import { SkeletonActivityCard } from "../../components/ui/skeleton";
-
-type Notification = {
-  id: string;
-  type: "participation" | "comment" | "reminder";
-  title: string;
-  message: string;
-  activityId?: string;
-  activityTitle?: string;
-  fromUserId?: string;
-  fromUserName?: string;
-  read: boolean;
-  createdAt: any;
-};
+import { collection, onSnapshot, orderBy, query } from "firebase/firestore";
+import { useEffect, useState } from "react";
+import {
+  FlatList,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import { colors } from "../../constants/color";
+import { auth, db } from "../../lib/firebase";
+import { deleteNotification, markNotificationAsRead } from "../../lib/notifications";
 
 export default function NotificationsScreen() {
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [refreshing, setRefreshing] = useState(false);
+  // liste de toutes les notifications de l'utilisateur
+  const [notifications, setNotifications] = useState<any[]>([]);
+
+  // true pendant le premier chargement
   const [loading, setLoading] = useState(true);
+
+  // true pendant le pull-to-refresh
+  const [refreshing, setRefreshing] = useState(false);
 
   const user = auth.currentUser;
 
+  // écouter en temps réel les notifications de l'utilisateur
   useEffect(() => {
     if (!user) return;
 
@@ -46,8 +37,8 @@ export default function NotificationsScreen() {
       orderBy("createdAt", "desc")
     );
 
-    const unsub = onSnapshot(q, (snap) => {
-      const list: Notification[] = snap.docs.map((d) => {
+    const stopEcoute = onSnapshot(q, (snap) => {
+      const liste = snap.docs.map((d) => {
         const data = d.data();
         return {
           id: d.id,
@@ -62,83 +53,93 @@ export default function NotificationsScreen() {
           createdAt: data.createdAt,
         };
       });
-      setNotifications(list);
+
+      setNotifications(liste);
       setLoading(false);
     });
 
-    return () => unsub();
+    return () => stopEcoute();
   }, [user]);
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    setTimeout(() => setRefreshing(false), 500);
-  };
-
-  const handleNotificationPress = async (notif: Notification) => {
-    // marquer comme lue
+  // quand on appuie sur une notification
+  const onPressNotification = async (notif: any) => {
+    // la marquer comme lue si elle ne l'est pas encore
     if (!notif.read && user) {
       await markNotificationAsRead(user.uid, notif.id);
     }
 
-    // naviguer vers l'activite
+    // aller vers l'activité concernée
     if (notif.activityId) {
       router.push(`/(main)/activity-details?id=${notif.activityId}` as any);
     }
   };
 
-  const handleDelete = async (notif: Notification) => {
+  // supprimer une notification
+  const onSupprimerNotification = async (notif: any) => {
     if (user) {
       await deleteNotification(user.uid, notif.id);
     }
   };
 
-  const getIcon = (type: string) => {
-    switch (type) {
-      case "participation":
-        return "person-add";
-      case "comment":
-        return "chatbubble";
-      case "reminder":
-        return "alarm";
-      default:
-        return "notifications";
-    }
+  // rafraîchir (pull-to-refresh)
+  const onRefresh = async () => {
+    setRefreshing(true);
+    // les données arrivent via onSnapshot donc pas besoin de refetch,
+    // on attend juste un peu pour montrer l'animation
+    setTimeout(() => setRefreshing(false), 500);
   };
 
-  const renderNotification = ({ item }: { item: Notification }) => {
-    const isUnread = !item.read;
-    const date = item.createdAt?.toDate
+  // choisir l'icone selon le type de notification
+  const getIcone = (type: string) => {
+    if (type === "participation") return "person-add";
+    if (type === "comment") return "chatbubble";
+    if (type === "reminder") return "alarm";
+    return "notifications";
+  };
+
+  // compter les non lues pour le badge
+  const nbNonLues = notifications.filter((n) => !n.read).length;
+
+  // affichage d'une notification dans la liste
+  const afficherNotification = ({ item }: { item: any }) => {
+    const estNonLue = !item.read;
+    const dateFormatee = item.createdAt?.toDate
       ? format(item.createdAt.toDate(), "dd MMM à HH:mm", { locale: fr })
       : "";
 
     return (
       <TouchableOpacity
-        style={[s.notifCard, isUnread && s.notifCardUnread]}
-        onPress={() => handleNotificationPress(item)}
+        style={[styles.carteNotif, estNonLue && styles.carteNotifNonLue]}
+        onPress={() => onPressNotification(item)}
         activeOpacity={0.7}
       >
-        <View style={s.notifIcon}>
+        {/* icone de la notification */}
+        <View style={styles.iconeNotif}>
           <Ionicons
-            name={getIcon(item.type) as any}
+            name={getIcone(item.type) as any}
             size={24}
-            color={isUnread ? colors.primary : colors.muted}
+            color={estNonLue ? colors.primary : colors.muted}
           />
         </View>
 
-        <View style={s.notifContent}>
-          <Text style={[s.notifTitle, isUnread && s.notifTitleUnread]}>
+        {/* contenu texte */}
+        <View style={styles.contenuNotif}>
+          <Text style={[styles.titreNotif, estNonLue && styles.titreNotifNonLu]}>
             {item.title}
           </Text>
-          <Text style={s.notifMessage}>{item.message}</Text>
-          {item.activityTitle && (
-            <Text style={s.notifActivity}>📍 {item.activityTitle}</Text>
-          )}
-          {date && <Text style={s.notifDate}>{date}</Text>}
+          <Text style={styles.messageNotif}>{item.message}</Text>
+          {item.activityTitle ? (
+            <Text style={styles.activiteNotif}>📍 {item.activityTitle}</Text>
+          ) : null}
+          {dateFormatee ? (
+            <Text style={styles.dateNotif}>{dateFormatee}</Text>
+          ) : null}
         </View>
 
+        {/* bouton supprimer */}
         <TouchableOpacity
-          style={s.deleteBtn}
-          onPress={() => handleDelete(item)}
+          style={styles.boutonSupprimer}
+          onPress={() => onSupprimerNotification(item)}
         >
           <Ionicons name="close" size={20} color={colors.muted} />
         </TouchableOpacity>
@@ -146,37 +147,40 @@ export default function NotificationsScreen() {
     );
   };
 
-  const unreadCount = notifications.filter((n) => !n.read).length;
-
   return (
-    <View style={s.screen}>
-      <View style={s.header}>
-        <Text style={s.headerTitle}>Notifications</Text>
-        {unreadCount > 0 && (
-          <View style={s.badge}>
-            <Text style={s.badgeText}>{unreadCount}</Text>
+    <View style={styles.ecran}>
+
+      {/* en-tête avec titre et badge non lues */}
+      <View style={styles.entete}>
+        <Text style={styles.titreEntete}>Notifications</Text>
+        {nbNonLues > 0 && (
+          <View style={styles.badge}>
+            <Text style={styles.badgeTexte}>{nbNonLues}</Text>
           </View>
         )}
       </View>
 
+      {/* pendant le chargement */}
       {loading ? (
-        <View style={{ padding: 20 }}>
-          <SkeletonActivityCard />
-          <SkeletonActivityCard />
-          <SkeletonActivityCard />
+        <View style={styles.blocChargement}>
+          <Text style={styles.texteChargement}>Chargement des notifications...</Text>
         </View>
       ) : notifications.length === 0 ? (
-        <EmptyState 
-          icon="notifications-off-outline" 
-          title="Aucune notification" 
-          description="Tu seras notifié quand quelqu'un interagit avec tes activités"
-        />
+        /* aucune notification */
+        <View style={styles.blocVide}>
+          <Ionicons name="notifications-off-outline" size={60} color={colors.muted} />
+          <Text style={styles.titreVide}>Aucune notification</Text>
+          <Text style={styles.descriptionVide}>
+            Tu seras notifié quand quelqu'un interagit avec tes activités
+          </Text>
+        </View>
       ) : (
+        /* liste des notifications */
         <FlatList
           data={notifications}
-          renderItem={renderNotification}
+          renderItem={afficherNotification}
           keyExtractor={(item) => item.id}
-          contentContainerStyle={s.list}
+          contentContainerStyle={styles.liste}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -186,16 +190,19 @@ export default function NotificationsScreen() {
           }
         />
       )}
+
     </View>
   );
 }
 
-const s = StyleSheet.create({
-  screen: {
+const styles = StyleSheet.create({
+  ecran: {
     flex: 1,
     backgroundColor: colors.bg,
   },
-  header: {
+
+  // en-tête
+  entete: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 20,
@@ -205,7 +212,7 @@ const s = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#111827",
   },
-  headerTitle: {
+  titreEntete: {
     color: colors.text,
     fontSize: 28,
     fontWeight: "800",
@@ -219,15 +226,52 @@ const s = StyleSheet.create({
     minWidth: 24,
     alignItems: "center",
   },
-  badgeText: {
+  badgeTexte: {
     color: "#0b111f",
     fontSize: 12,
     fontWeight: "700",
   },
-  list: {
+
+  // état chargement
+  blocChargement: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 40,
+  },
+  texteChargement: {
+    color: colors.muted,
+    fontSize: 16,
+  },
+
+  // état vide (aucune notification)
+  blocVide: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 40,
+  },
+  titreVide: {
+    color: colors.text,
+    fontSize: 20,
+    fontWeight: "700",
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  descriptionVide: {
+    color: colors.muted,
+    fontSize: 14,
+    textAlign: "center",
+    lineHeight: 22,
+  },
+
+  // liste
+  liste: {
     padding: 20,
   },
-  notifCard: {
+
+  // carte notification
+  carteNotif: {
     flexDirection: "row",
     backgroundColor: "#020617",
     borderRadius: 16,
@@ -236,11 +280,11 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#111827",
   },
-  notifCardUnread: {
+  carteNotifNonLue: {
     borderColor: colors.primary,
     backgroundColor: "#0f172a",
   },
-  notifIcon: {
+  iconeNotif: {
     width: 48,
     height: 48,
     borderRadius: 24,
@@ -249,51 +293,33 @@ const s = StyleSheet.create({
     justifyContent: "center",
     marginRight: 12,
   },
-  notifContent: {
+  contenuNotif: {
     flex: 1,
   },
-  notifTitle: {
+  titreNotif: {
     color: colors.text,
     fontSize: 15,
     fontWeight: "600",
     marginBottom: 4,
   },
-  notifTitleUnread: {
+  titreNotifNonLu: {
     fontWeight: "700",
   },
-  notifMessage: {
+  messageNotif: {
     color: colors.muted,
     fontSize: 14,
     marginBottom: 4,
   },
-  notifActivity: {
+  activiteNotif: {
     color: colors.primary,
     fontSize: 13,
     marginBottom: 4,
   },
-  notifDate: {
+  dateNotif: {
     color: colors.muted,
     fontSize: 12,
   },
-  deleteBtn: {
+  boutonSupprimer: {
     padding: 4,
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 40,
-  },
-  emptyText: {
-    color: colors.text,
-    fontSize: 18,
-    fontWeight: "600",
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  emptySubtext: {
-    color: colors.muted,
-    fontSize: 14,
-    textAlign: "center",
   },
 });

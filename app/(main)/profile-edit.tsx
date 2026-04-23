@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Alert, Image } from "react-native";
 import { useRouter } from "expo-router";
 import { auth, db } from "../../lib/firebase";
@@ -53,16 +53,13 @@ export default function ProfileEditScreen() {
     load();
   }, []);
 
-  const interestsArray = useMemo(
-    () =>
-      interestsInput
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean)
-        .map((t) => (t.length > 20 ? t.slice(0, 20) : t))
-        .slice(0, 10),
-    [interestsInput]
-  );
+  // transformer le texte "ciné, foot, bars" en tableau ["ciné", "foot", "bars"]
+  const interestsArray = interestsInput
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .map((t) => (t.length > 20 ? t.slice(0, 20) : t))
+    .slice(0, 10);
 
   const pickImage = async () => {
     // demander la permission

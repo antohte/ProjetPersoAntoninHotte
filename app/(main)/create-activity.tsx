@@ -1,79 +1,70 @@
+import { Ionicons } from "@expo/vector-icons";
+import DateTimePicker from "@react-native-community/datetimepicker";
+import { addDoc, collection, Timestamp } from "firebase/firestore";
 import { useState } from "react";
 import {
-  View,
+  Alert,
+  ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  StyleSheet,
-  ScrollView,
-  Alert,
 } from "react-native";
 import { useRouter } from "expo-router";
-import DateTimePicker, {
-  DateTimePickerEvent,
-} from "@react-native-community/datetimepicker";
-import {
-  Timestamp,
-  addDoc,
-  collection,
-  doc,
-  getDoc,
-} from "firebase/firestore";
-import { auth, db } from "../../lib/firebase";
+import { CATEGORIES } from "../../constants/categories";
 import { colors } from "../../constants/color";
-import { Ionicons } from "@expo/vector-icons";
-
-const CATEGORIES = [
-  { id: "bar", label: "Bar", icon: "beer" },
-  { id: "sport", label: "Sport", icon: "football" },
-  { id: "revision", label: "Révision", icon: "book" },
-  { id: "culture", label: "Culture", icon: "color-palette" },
-  { id: "soiree", label: "Soirée", icon: "musical-notes" },
-  { id: "autre", label: "Autre", icon: "ellipsis-horizontal" },
-] as const;
+import { auth, db } from "../../lib/firebase";
+import { getUserDisplayName } from "../../lib/user";
 
 export default function CreateActivityScreen() {
   const router = useRouter();
 
-  const [title, setTitle] = useState("");
+  // les champs du formulaire
+  const [titre, setTitre] = useState("");
   const [description, setDescription] = useState("");
-  const [place, setPlace] = useState("");
-  const [category, setCategory] = useState("autre");
-  const [when, setWhen] = useState<Date>(new Date());
+  const [lieu, setLieu] = useState("");
+  const [categorie, setCategorie] = useState("autre");
+  const [date, setDate] = useState(new Date());
+
+  // afficher ou cacher le sélecteur de date
   const [showPicker, setShowPicker] = useState(false);
 
+  // true pendant l'enregistrement
   const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
 
-  const formatDateFR = (d: Date) =>
-    new Intl.DateTimeFormat("fr-FR", {
+  // message d'erreur à afficher
+  const [erreur, setErreur] = useState("");
+
+  // formater la date en français pour l'afficher dans le bouton
+  const formaterDate = (d: Date) => {
+    return new Intl.DateTimeFormat("fr-FR", {
       weekday: "short",
       day: "2-digit",
       month: "short",
       hour: "2-digit",
       minute: "2-digit",
     }).format(d);
-
-  const onChangeDate = (event: DateTimePickerEvent, date?: Date) => {
-    if (event.type === "dismissed") {
-      setShowPicker(false);
-      return;
-    }
-    if (date) {
-      setWhen(date);
-    }
-    setShowPicker(false);
   };
 
-  const onSave = async () => {
-    setErr(null);
+  // quand l'utilisateur choisit une date dans le picker
+  const onChangerDate = (event: any, nouvelleDate?: Date) => {
+    setShowPicker(false);
+    if (event.type !== "dismissed" && nouvelleDate) {
+      setDate(nouvelleDate);
+    }
+  };
 
-    if (!title.trim()) {
-      setErr("Merci d’indiquer un titre d’activité.");
+  // enregistrer l'activité dans Firebase
+  const enregistrer = async () => {
+    setErreur("");
+
+    // vérifications de base
+    if (!titre.trim()) {
+      setErreur("Merci d'indiquer un titre d'activité.");
       return;
     }
-    if (!place.trim()) {
-      setErr("Merci d’indiquer un lieu.");
+    if (!lieu.trim()) {
+      setErreur("Merci d'indiquer un lieu.");
       return;
     }
 
@@ -84,79 +75,67 @@ export default function CreateActivityScreen() {
     }
 
     setSaving(true);
-    try {
-      // recuperer displayname depuis firestore si dispo
-      let creatorName = user.displayName || "";
-      
-      if (!creatorName) {
-        try {
-          const userDoc = await getDoc(doc(db, "users", user.uid));
-          if (userDoc.exists()) {
-            creatorName = userDoc.data().displayName || "";
-          }
-        } catch (e) {
-          console.log("Erreur récupération displayName:", e);
-        }
-      }
-      
-      // fallback sur email en dernier recours
-      if (!creatorName) {
-        creatorName = user.email?.split("@")[0] || "Utilisateur";
-      }
 
+    try {
+      // récupérer le nom affiché de l'utilisateur
+      const creatorName = await getUserDisplayName();
+
+      // ajouter le document dans Firestore
       await addDoc(collection(db, "activities"), {
-        title: title.trim(),
+        title: titre.trim(),
         description: description.trim(),
-        place: place.trim(),
-        date: Timestamp.fromDate(when),
+        place: lieu.trim(),
+        date: Timestamp.fromDate(date),
         ownerId: user.uid,
         creatorName,
-        category,
-        participants: [] as string[],
+        category: categorie,
+        participants: [],
         createdAt: Timestamp.now(),
       });
 
       Alert.alert("Activité créée !", "Ta sortie a bien été enregistrée.");
-      // reset formulaire
-      setTitle("");
-      setDescription("");
-      setPlace("");
-      setCategory("autre");
-      setWhen(new Date());
 
-      // back au feed
+      // remettre le formulaire à zéro
+      setTitre("");
+      setDescription("");
+      setLieu("");
+      setCategorie("autre");
+      setDate(new Date());
+
       router.back();
     } catch (e: any) {
-      console.error("Erreur création activité:", e);
-      setErr(e.message ?? "Impossible de créer l’activité.");
-    } finally {
-      setSaving(false);
+      console.log("Erreur création activité :", e);
+      setErreur(e.message || "Impossible de créer l'activité.");
     }
+
+    setSaving(false);
   };
 
   return (
     <ScrollView
-      style={s.screen}
-      contentContainerStyle={s.content}
+      style={styles.ecran}
+      contentContainerStyle={styles.contenu}
       keyboardShouldPersistTaps="handled"
     >
-      <Text style={s.title}>Nouvelle activité</Text>
-      <Text style={s.subtitle}>
+      <Text style={styles.titre}>Nouvelle activité</Text>
+      <Text style={styles.sousTitre}>
         Propose une sortie à tes camarades (soirée, révisions, sport…)
       </Text>
 
-      <Text style={s.label}>Titre</Text>
+      {/* champ titre */}
+      <Text style={styles.label}>Titre</Text>
       <TextInput
-        style={s.input}
+        style={styles.input}
         placeholder="Ex : Sortie en boîte, Révisions de maths…"
         placeholderTextColor={colors.muted}
-        value={title}
-        onChangeText={setTitle}
+        value={titre}
+        onChangeText={setTitre}
       />
 
-      <Text style={s.label}>Description</Text>
+      {/* champ description */}
+      <Text style={styles.label}>Description</Text>
       <TextInput
-        style={[s.input, s.inputMultiline]}
+        style={[styles.input, styles.inputMultiline]}
         placeholder="Explique rapidement ce que tu proposes."
         placeholderTextColor={colors.muted}
         value={description}
@@ -164,40 +143,42 @@ export default function CreateActivityScreen() {
         multiline
       />
 
-      <Text style={s.label}>Lieu</Text>
+      {/* champ lieu */}
+      <Text style={styles.label}>Lieu</Text>
       <TextInput
-        style={s.input}
+        style={styles.input}
         placeholder="Ex : La Box, Université, Bar du centre…"
         placeholderTextColor={colors.muted}
-        value={place}
-        onChangeText={setPlace}
+        value={lieu}
+        onChangeText={setLieu}
       />
 
-      <Text style={s.label}>Catégorie</Text>
-      <ScrollView 
-        horizontal 
+      {/* sélection catégorie */}
+      <Text style={styles.label}>Catégorie</Text>
+      <ScrollView
+        horizontal
         showsHorizontalScrollIndicator={false}
-        style={s.categoryScroll}
-        contentContainerStyle={s.categoryScrollContent}
+        style={styles.scrollCategories}
+        contentContainerStyle={styles.contenuScrollCategories}
       >
         {CATEGORIES.map((cat) => (
           <TouchableOpacity
             key={cat.id}
             style={[
-              s.categoryChip,
-              category === cat.id && s.categoryChipActive,
+              styles.chipCategorie,
+              categorie === cat.id && styles.chipCategorieActif,
             ]}
-            onPress={() => setCategory(cat.id)}
+            onPress={() => setCategorie(cat.id)}
           >
-            <Ionicons 
-              name={cat.icon as any} 
-              size={18} 
-              color={category === cat.id ? "#0b111f" : colors.text} 
+            <Ionicons
+              name={cat.icon as any}
+              size={18}
+              color={categorie === cat.id ? "#0b111f" : colors.text}
             />
             <Text
               style={[
-                s.categoryChipText,
-                category === cat.id && s.categoryChipTextActive,
+                styles.chipCategorieTexte,
+                categorie === cat.id && styles.chipCategorieTexteActif,
               ]}
             >
               {cat.label}
@@ -206,55 +187,58 @@ export default function CreateActivityScreen() {
         ))}
       </ScrollView>
 
-      <Text style={s.label}>Date et heure</Text>
+      {/* sélection date et heure */}
+      <Text style={styles.label}>Date et heure</Text>
       <TouchableOpacity
-        style={s.input}
+        style={styles.input}
         activeOpacity={0.8}
         onPress={() => setShowPicker(true)}
       >
-        <Text style={{ color: colors.text }}>{formatDateFR(when)}</Text>
+        <Text style={{ color: colors.text }}>{formaterDate(date)}</Text>
       </TouchableOpacity>
 
       {showPicker && (
         <DateTimePicker
           mode="datetime"
-          value={when}
+          value={date}
           minimumDate={new Date()}
-          onChange={onChangeDate}
+          onChange={onChangerDate}
         />
       )}
 
-      {err ? <Text style={s.error}>{err}</Text> : null}
+      {/* message d'erreur */}
+      {erreur ? <Text style={styles.erreur}>{erreur}</Text> : null}
 
+      {/* bouton créer */}
       <TouchableOpacity
-        style={[s.btn, saving && s.btnDisabled]}
-        onPress={onSave}
+        style={[styles.bouton, saving && styles.boutonDesactive]}
+        onPress={enregistrer}
         disabled={saving}
         activeOpacity={0.9}
       >
-        <Text style={s.btnText}>
-          {saving ? "Enregistrement..." : "Créer l’activité"}
+        <Text style={styles.boutonTexte}>
+          {saving ? "Enregistrement..." : "Créer l'activité"}
         </Text>
       </TouchableOpacity>
     </ScrollView>
   );
 }
 
-const s = StyleSheet.create({
-  screen: {
+const styles = StyleSheet.create({
+  ecran: {
     flex: 1,
     backgroundColor: colors.bg,
   },
-  content: {
+  contenu: {
     padding: 20,
     gap: 12,
   },
-  title: {
+  titre: {
     color: colors.text,
     fontSize: 24,
     fontWeight: "800",
   },
-  subtitle: {
+  sousTitre: {
     color: colors.muted,
     marginBottom: 8,
   },
@@ -277,32 +261,34 @@ const s = StyleSheet.create({
     minHeight: 80,
     textAlignVertical: "top",
   },
-  error: {
+  erreur: {
     marginTop: 6,
     color: "#fca5a5",
   },
-  btn: {
+  bouton: {
     marginTop: 16,
     backgroundColor: colors.primary,
     borderRadius: 999,
     paddingVertical: 14,
     alignItems: "center",
   },
-  btnDisabled: {
+  boutonDesactive: {
     opacity: 0.7,
   },
-  btnText: {
+  boutonTexte: {
     color: "#0b111f",
     fontWeight: "800",
     fontSize: 16,
   },
-  categoryScroll: {
+
+  // catégories
+  scrollCategories: {
     marginVertical: 8,
   },
-  categoryScrollContent: {
+  contenuScrollCategories: {
     gap: 8,
   },
-  categoryChip: {
+  chipCategorie: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#020617",
@@ -313,16 +299,16 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#111827",
   },
-  categoryChipActive: {
+  chipCategorieActif: {
     backgroundColor: colors.primary,
     borderColor: colors.primary,
   },
-  categoryChipText: {
+  chipCategorieTexte: {
     color: colors.text,
     fontSize: 14,
     fontWeight: "600",
   },
-  categoryChipTextActive: {
+  chipCategorieTexteActif: {
     color: "#0b111f",
   },
 });

@@ -8,13 +8,20 @@ type UserAvatarProps = {
   userId?: string;
   size?: number;
   userName?: string;
+  photoURL?: string; // si fourni, évite le fetch Firestore
 };
 
-export function UserAvatar({ userId, size = 40, userName }: UserAvatarProps) {
-  const [photoURL, setPhotoURL] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+export function UserAvatar({ userId, size = 40, userName, photoURL: photoProp }: UserAvatarProps) {
+  const [photoURL, setPhotoURL] = useState<string | null>(photoProp ?? null);
+  const [loading, setLoading] = useState(!photoProp);
 
   useEffect(() => {
+    if (photoProp !== undefined) {
+      setPhotoURL(photoProp ?? null);
+      setLoading(false);
+      return;
+    }
+
     const safeUserId = typeof userId === "string" ? userId.trim() : "";
     if (!safeUserId) {
       setPhotoURL(null);
@@ -22,63 +29,36 @@ export function UserAvatar({ userId, size = 40, userName }: UserAvatarProps) {
       return;
     }
 
-    const loadUserPhoto = async () => {
-      try {
-        const userDoc = await getDoc(doc(db, "users", safeUserId));
-        if (userDoc.exists()) {
-          const userData = userDoc.data();
-          const rawPhotoURL = userData?.photoURL;
-          const safePhotoURL =
-            typeof rawPhotoURL === "string" && rawPhotoURL.trim().length > 0
-              ? rawPhotoURL.trim()
-              : null;
-          setPhotoURL(safePhotoURL);
+    getDoc(doc(db, "users", safeUserId))
+      .then((snap) => {
+        if (snap.exists()) {
+          const raw = snap.data()?.photoURL;
+          setPhotoURL(typeof raw === "string" && raw.trim() ? raw.trim() : null);
         } else {
           setPhotoURL(null);
         }
-      } catch (error) {
-        console.error("erreur chargement photo", error);
-        setPhotoURL(null);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadUserPhoto();
-  }, [userId]);
+      })
+      .catch(() => setPhotoURL(null))
+      .finally(() => setLoading(false));
+  }, [userId, photoProp]);
 
   const initial = userName?.[0]?.toUpperCase() || "?";
 
   if (loading) {
-    return (
-      <View
-        style={[
-          s.placeholder,
-          { width: size, height: size, borderRadius: size / 2 },
-        ]}
-      />
-    );
+    return <View style={[s.placeholder, { width: size, height: size, borderRadius: size / 2 }]} />;
   }
 
   if (photoURL) {
     return (
       <Image
         source={{ uri: photoURL }}
-        style={[
-          s.image,
-          { width: size, height: size, borderRadius: size / 2 },
-        ]}
+        style={[s.image, { width: size, height: size, borderRadius: size / 2 }]}
       />
     );
   }
 
   return (
-    <View
-      style={[
-        s.fallback,
-        { width: size, height: size, borderRadius: size / 2 },
-      ]}
-    >
+    <View style={[s.fallback, { width: size, height: size, borderRadius: size / 2 }]}>
       <Text style={[s.initial, { fontSize: size / 2.5 }]}>{initial}</Text>
     </View>
   );
