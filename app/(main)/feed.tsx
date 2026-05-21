@@ -237,12 +237,17 @@ export default function FeedScreen() {
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [showFilters, setShowFilters] = useState(false);
 
-  const user = auth.currentUser;
+  // user en state réactif : se met à jour quand Firebase Auth est prête (important sur web)
+  const [user, setUser] = useState(auth.currentUser);
+  useEffect(() => {
+    const unsub = auth.onAuthStateChanged((u) => setUser(u));
+    return () => unsub();
+  }, []);
 
   // écouter les activités en temps réel - se met à jour automatiquement quand quelqu'un crée une activité
   useEffect(() => {
     // attendre que l'auth soit prête avant de lancer la requête Firestore
-    if (!auth.currentUser) {
+    if (!user) {
       setLoading(false);
       return;
     }
@@ -295,7 +300,7 @@ export default function FeedScreen() {
 
     // quand le composant est démonté ou quand les filtres changent, on arrête d'écouter
     return () => desabonner();
-  }, [selectedCategory, nbAffiches, searchText]);
+  }, [selectedCategory, nbAffiches, searchText, user]);
 
   // charger les 3 derniers commentaires de chaque activité
   useEffect(() => {
@@ -354,6 +359,15 @@ export default function FeedScreen() {
       });
       // vider le champ après envoi
       setDraftComments((prev: any) => ({ ...prev, [activityId]: "" }));
+      // recharger les commentaires de cette activité pour les afficher tout de suite
+      const q = query(
+        collection(db, "activities", activityId, "comments"),
+        orderBy("createdAt", "desc"),
+        limit(3)
+      );
+      const snap = await getDocs(q);
+      const listeMAJ = snap.docs.map((d) => ({ id: d.id, ...d.data() })).reverse();
+      setCommentsByActivity((prev: any) => ({ ...prev, [activityId]: listeMAJ }));
     } catch (e) {
       console.log("Erreur ajout commentaire :", e);
     }
