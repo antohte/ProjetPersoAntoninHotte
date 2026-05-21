@@ -11,9 +11,9 @@ import {
   doc,
   getDocs,
   limit,
+  onSnapshot,
   orderBy,
   query,
-  startAfter,
   Timestamp,
   updateDoc,
   where,
@@ -225,9 +225,8 @@ export default function FeedScreen() {
   // états de chargement
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [nbAffiches, setNbAffiches] = useState(NB_PAR_PAGE); // nombre d'activités à afficher
   const [hasMore, setHasMore] = useState(true);
-  const [lastDoc, setLastDoc] = useState<any>(null);
 
   // commentaires et brouillons par activité
   const [commentsByActivity, setCommentsByActivity] = useState<any>({});
@@ -240,49 +239,26 @@ export default function FeedScreen() {
 
   const user = auth.currentUser;
 
-  // charger les activités depuis Firebase
-  const loadActivities = async (loadMore = false) => {
-    if (loadMore) {
-      setLoadingMore(true);
-    } else {
-      setLoading(true);
+  // écouter les activités en temps réel - se met à jour automatiquement quand quelqu'un crée une activité
+  useEffect(() => {
+    setLoading(true);
+
+    // construire la requête avec ou sans filtre catégorie
+    const conditions: any[] = [];
+    if (selectedCategory !== "all") {
+      conditions.push(where("category", "==", selectedCategory));
     }
+    conditions.push(orderBy("date", "asc"));
+    conditions.push(limit(nbAffiches));
 
-    try {
-      // construire la requête avec ou sans filtre catégorie
-      const conditions: any[] = [];
-      if (selectedCategory !== "all") {
-        conditions.push(where("category", "==", selectedCategory));
-      }
-      conditions.push(orderBy("date", "asc"));
-      conditions.push(limit(NB_PAR_PAGE));
+    const q = query(collection(db, "activities"), ...conditions);
 
-      let q = query(collection(db, "activities"), ...conditions);
-
-      // si on charge la suite, on commence après le dernier doc
-      if (loadMore && lastDoc) {
-        q = query(
-          collection(db, "activities"),
-          ...conditions.slice(0, -1),
-          startAfter(lastDoc),
-          limit(NB_PAR_PAGE)
-        );
-      }
-
-      const resultat = await getDocs(q);
-
-      if (resultat.empty) {
-        setHasMore(false);
-        setLoadingMore(false);
-        setLoading(false);
-        return;
-      }
-
-      // transformer les docs Firebase en objets JS simples
-      let liste = resultat.docs.map((doc) => {
-        const data = doc.data();
+    // onSnapshot écoute en temps réel : quand une activité est ajoutée/modifiée, on est notifié
+    const desabonner = onSnapshot(q, (snap) => {
+      let liste = snap.docs.map((d) => {
+        const data = d.data();
         return {
-          id: doc.id,
+          id: d.id,
           title: data.title,
           description: data.description || "",
           place: data.place || "",
@@ -294,39 +270,26 @@ export default function FeedScreen() {
         };
       });
 
-      // filtrer par recherche texte (côté client)
+      // filtrer par texte de recherche (côté client)
       if (searchText.trim() !== "") {
         const recherche = searchText.toLowerCase();
-        liste = liste.filter((a) =>
-          a.title.toLowerCase().includes(recherche) ||
-          a.description.toLowerCase().includes(recherche) ||
-          a.place.toLowerCase().includes(recherche)
+        liste = liste.filter(
+          (a) =>
+            a.title.toLowerCase().includes(recherche) ||
+            a.description.toLowerCase().includes(recherche) ||
+            a.place.toLowerCase().includes(recherche)
         );
       }
 
-      // ajouter à la liste ou remplacer selon si on charge la suite
-      if (loadMore) {
-        setActivities((prev) => [...prev, ...liste]);
-      } else {
-        setActivities(liste);
-      }
+      setActivities(liste);
+      setHasMore(snap.docs.length === nbAffiches);
+      setLoading(false);
+      setRefreshing(false);
+    });
 
-      setLastDoc(resultat.docs[resultat.docs.length - 1]);
-      setHasMore(resultat.docs.length === NB_PAR_PAGE);
-    } catch (err) {
-      console.log("Erreur chargement activités :", err);
-    }
-
-    setLoadingMore(false);
-    setLoading(false);
-  };
-
-  // recharger quand la catégorie ou la recherche change
-  useEffect(() => {
-    setLastDoc(null);
-    setHasMore(true);
-    loadActivities();
-  }, [selectedCategory, searchText]);
+    // quand le composant est démonté ou quand les filtres changent, on arrête d'écouter
+    return () => desabonner();
+  }, [selectedCategory, nbAffiches, searchText]);
 
   // charger les 3 derniers commentaires de chaque activité
   useEffect(() => {
@@ -334,7 +297,6 @@ export default function FeedScreen() {
 
     const chargerCommentaires = async () => {
       const resultat: any = {};
-
       for (const activite of activities) {
         const q = query(
           collection(db, "activities", activite.id, "comments"),
@@ -345,20 +307,17 @@ export default function FeedScreen() {
         const liste = snap.docs.map((d) => ({ id: d.id, ...d.data() })).reverse();
         resultat[activite.id] = liste;
       }
-
       setCommentsByActivity(resultat);
     };
 
     chargerCommentaires().catch((err) => console.log("Erreur commentaires :", err));
   }, [activities.map((a) => a.id).join(",")]);
 
-  // rafraîchir la liste (pull to refresh)
-  const onRefresh = async () => {
+  // rafraîchir (pull to refresh) - le listener en temps réel gère déjà ça, on montre juste le spinner
+  const onRefresh = () => {
     setRefreshing(true);
-    setLastDoc(null);
-    setHasMore(true);
-    await loadActivities(false);
-    setRefreshing(false);
+    setNbAffiches(NB_PAR_PAGE);
+    // le listener va appeler setRefreshing(false) quand il recevra les nouvelles données
   };
 
   // rejoindre ou quitter une activité
@@ -552,12 +511,9 @@ export default function FeedScreen() {
       {!loading && hasMore && (
         <TouchableOpacity
           style={styles.boutonChargerPlus}
-          onPress={() => loadActivities(true)}
-          disabled={loadingMore}
+          onPress={() => setNbAffiches((prev) => prev + NB_PAR_PAGE)}
         >
-          <Text style={styles.boutonChargerPlusTexte}>
-            {loadingMore ? "Chargement..." : "Charger plus d'activités"}
-          </Text>
+          <Text style={styles.boutonChargerPlusTexte}>Charger plus d'activités</Text>
         </TouchableOpacity>
       )}
     </ScrollView>

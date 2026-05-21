@@ -4,6 +4,7 @@ import { addDoc, collection, Timestamp } from "firebase/firestore";
 import { useState } from "react";
 import {
   Alert,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -189,21 +190,47 @@ export default function CreateActivityScreen() {
 
       {/* sélection date et heure */}
       <Text style={styles.label}>Date et heure</Text>
-      <TouchableOpacity
-        style={styles.input}
-        activeOpacity={0.8}
-        onPress={() => setShowPicker(true)}
-      >
-        <Text style={{ color: colors.text }}>{formaterDate(date)}</Text>
-      </TouchableOpacity>
 
-      {showPicker && (
-        <DateTimePicker
-          mode="datetime"
-          value={date}
-          minimumDate={new Date()}
-          onChange={onChangerDate}
+      {Platform.OS === "web" ? (
+        // sur le web, on utilise un input HTML natif car DateTimePicker ne marche pas sur web
+        <input
+          type="datetime-local"
+          min={new Date().toISOString().slice(0, 16)}
+          value={date.toISOString().slice(0, 16)}
+          onChange={(e: any) => {
+            if (e.target.value) setDate(new Date(e.target.value));
+          }}
+          style={{
+            backgroundColor: "#020617",
+            color: colors.text,
+            border: "1px solid #111827",
+            borderRadius: 12,
+            padding: "12px 14px",
+            fontSize: 14,
+            width: "100%",
+            boxSizing: "border-box",
+            colorScheme: "dark",
+          } as any}
         />
+      ) : (
+        // sur mobile, on utilise le DateTimePicker natif
+        <>
+          <TouchableOpacity
+            style={styles.input}
+            activeOpacity={0.8}
+            onPress={() => setShowPicker(true)}
+          >
+            <Text style={{ color: colors.text }}>{formaterDate(date)}</Text>
+          </TouchableOpacity>
+          {showPicker && (
+            <DateTimePicker
+              mode="datetime"
+              value={date}
+              minimumDate={new Date()}
+              onChange={onChangerDate}
+            />
+          )}
+        </>
       )}
 
       {/* message d'erreur */}
