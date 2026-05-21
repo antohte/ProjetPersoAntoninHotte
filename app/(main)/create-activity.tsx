@@ -10,6 +10,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  View,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { CATEGORIES } from "../../constants/categories";
@@ -192,26 +193,53 @@ export default function CreateActivityScreen() {
       <Text style={styles.label}>Date et heure</Text>
 
       {Platform.OS === "web" ? (
-        // sur le web, on utilise un input HTML natif car DateTimePicker ne marche pas sur web
-        <input
-          type="datetime-local"
-          min={new Date().toISOString().slice(0, 16)}
-          value={date.toISOString().slice(0, 16)}
-          onChange={(e: any) => {
-            if (e.target.value) setDate(new Date(e.target.value));
-          }}
-          style={{
-            backgroundColor: "#020617",
-            color: colors.text,
-            border: "1px solid #111827",
-            borderRadius: 12,
-            padding: "12px 14px",
-            fontSize: 14,
-            width: "100%",
-            boxSizing: "border-box",
-            colorScheme: "dark",
-          } as any}
-        />
+        // sur le web : deux inputs séparés (date + heure) pour éviter le gros popup datetime-local
+        // on utilise les méthodes locales (getHours, getDate...) pour éviter le décalage UTC
+        <View style={{ flexDirection: "row", gap: 8 }}>
+          <input
+            type="date"
+            min={`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}-${String(new Date().getDate()).padStart(2, "0")}`}
+            value={`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`}
+            onChange={(e: any) => {
+              if (!e.target.value) return;
+              const [annee, mois, jour] = e.target.value.split("-").map(Number);
+              const nouvelleDate = new Date(date);
+              nouvelleDate.setFullYear(annee, mois - 1, jour);
+              setDate(nouvelleDate);
+            }}
+            style={{
+              flex: 1,
+              backgroundColor: "#020617",
+              color: colors.text,
+              border: "1px solid #111827",
+              borderRadius: 12,
+              padding: "12px 14px",
+              fontSize: 14,
+              colorScheme: "dark",
+            } as any}
+          />
+          <input
+            type="time"
+            value={`${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`}
+            onChange={(e: any) => {
+              if (!e.target.value) return;
+              const [heures, minutes] = e.target.value.split(":").map(Number);
+              const nouvelleDate = new Date(date);
+              nouvelleDate.setHours(heures, minutes);
+              setDate(nouvelleDate);
+            }}
+            style={{
+              flex: 1,
+              backgroundColor: "#020617",
+              color: colors.text,
+              border: "1px solid #111827",
+              borderRadius: 12,
+              padding: "12px 14px",
+              fontSize: 14,
+              colorScheme: "dark",
+            } as any}
+          />
+        </View>
       ) : (
         // sur mobile, on utilise le DateTimePicker natif
         <>

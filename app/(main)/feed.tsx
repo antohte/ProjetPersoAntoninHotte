@@ -241,6 +241,12 @@ export default function FeedScreen() {
 
   // écouter les activités en temps réel - se met à jour automatiquement quand quelqu'un crée une activité
   useEffect(() => {
+    // attendre que l'auth soit prête avant de lancer la requête Firestore
+    if (!auth.currentUser) {
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
 
     // construire la requête avec ou sans filtre catégorie
